@@ -1,0 +1,451 @@
+# Measuring-block labels: part,group,field,label
+# `part` matches the start of a controller's ident (its part number).
+# KW1281 controllers don't send names, so add your cars' groups here from the
+# repair manual (Bentley lists every controller's measuring blocks).
+# The entries below describe the simulated demo cars in kwcore/fake_ecu.c.
+part,group,field,label
+# demo ABS (EuroVan and Harlequin)
+7D0907379F,1,1,Wheel speed front left
+7D0907379F,1,2,Wheel speed front right
+7D0907379F,1,3,Wheel speed rear left
+7D0907379F,1,4,Wheel speed rear right
+7D0907379F,2,1,Brake light switch
+7D0907379F,2,2,Supply voltage
+7D0907379F,2,3,Return flow pump
+7D0907379F,2,4,ABS warning lamp
+1H0907379D,1,1,Wheel speed front left
+1H0907379D,1,2,Wheel speed front right
+1H0907379D,1,3,Wheel speed rear left
+1H0907379D,1,4,Wheel speed rear right
+1H0907379D,2,1,Brake light switch
+1H0907379D,2,2,Supply voltage
+1H0907379D,2,3,Return flow pump
+1H0907379D,2,4,ABS warning lamp
+# demo Climatronic
+7D0907040H,1,1,Outside temperature
+7D0907040H,1,2,Cabin temperature
+7D0907040H,1,3,Fresh air blower voltage
+7D0907040H,1,4,Coolant temperature
+7D0907040H,2,1,Temperature flap
+7D0907040H,2,2,Defrost flap
+7D0907040H,2,3,Footwell flap
+7D0907040H,2,4,Fresh air flap
+# demo instrument clusters
+7D0920823E,1,1,Vehicle speed
+7D0920823E,1,2,Engine speed
+7D0920823E,1,3,Oil pressure switch
+7D0920823E,1,4,Time
+7D0920823E,2,1,Odometer
+7D0920823E,2,2,Fuel level
+7D0920823E,2,3,Fuel sender resistance
+7D0920823E,2,4,Outside temperature
+# demo airbag
+1H0909605,1,1,Driver airbag igniter
+1H0909605,1,2,Passenger airbag igniter
+1H0909605,1,3,Driver belt tensioner
+1H0909605,1,4,Passenger belt tensioner
+
+# VW "standardized" measuring-block groups for petrol engines (about 1999-2000
+# on), per Ross-Tech's guide https://www.ross-tech.com/vag-com/m_blocks/ ;
+# names shortened. "@petrol" applies to engine ECUs (part number xxx906...)
+# with no specific entry above; older engines may differ.
+@petrol,1,1,Engine speed
+@petrol,1,2,Engine coolant temperature
+@petrol,1,3,Lambda control value Bank 1
+@petrol,1,4,Lambda control value Bank 2
+@petrol,2,1,Engine speed
+@petrol,2,2,Load
+@petrol,2,3,Mean injection time
+@petrol,2,4,Air mass
+@petrol,3,1,Engine speed
+@petrol,3,2,Air mass
+@petrol,3,3,Throttle valve angle
+@petrol,3,4,Ignition angle (actual)
+@petrol,4,1,Engine speed
+@petrol,4,2,Voltage
+@petrol,4,3,Coolant temperature
+@petrol,4,4,Intake air temperature
+@petrol,5,1,Engine speed
+@petrol,5,2,Load
+@petrol,5,3,Vehicle speed
+@petrol,5,4,Operating condition
+@petrol,6,1,Engine speed
+@petrol,6,2,Load
+@petrol,6,3,Intake air temperature
+@petrol,6,4,Altitude correction
+@petrol,7,1,Engine speed
+@petrol,7,2,Load
+@petrol,7,3,Intake manifold pressure
+@petrol,7,4,Mass airflow sensor
+@petrol,8,1,Brake condition
+@petrol,8,2,Supply voltage
+@petrol,8,3,Brake vacuum pump condition
+@petrol,8,4,Brake booster pressure
+@petrol,10,1,Engine speed
+@petrol,10,2,Load
+@petrol,10,3,Throttle valve angle
+@petrol,10,4,Ignition angle (actual)
+@petrol,11,1,Engine speed
+@petrol,11,2,Coolant temperature
+@petrol,11,3,Intake air temperature
+@petrol,11,4,Ignition angle (actual)
+@petrol,12,1,Engine speed
+@petrol,12,2,Load
+@petrol,12,3,Crank tooth at cam flank
+@petrol,12,4,Crank tooth at cam flank
+@petrol,14,1,Engine speed
+@petrol,14,2,Load
+@petrol,14,3,Misfire counter
+@petrol,14,4,Misfire recognition
+@petrol,15,1,Misfires Cyl. 1
+@petrol,15,2,Misfires Cyl. 2
+@petrol,15,3,Misfires Cyl. 3
+@petrol,15,4,Misfire recognition
+@petrol,16,1,Misfires Cyl. 4
+@petrol,16,2,Misfires Cyl. 5
+@petrol,16,3,Misfires Cyl. 6
+@petrol,16,4,Misfire recognition
+@petrol,17,1,Misfires Cyl. 7
+@petrol,17,2,Misfires Cyl. 8
+@petrol,17,3,Misfires Cyl. 9
+@petrol,17,4,Misfire recognition
+@petrol,18,1,Lower RPM limit
+@petrol,18,2,Upper RPM limit
+@petrol,18,3,Lower RPM limit
+@petrol,18,4,Upper RPM limit
+@petrol,19,1,Misfires Cyl. 10
+@petrol,19,2,Misfires Cyl. 11
+@petrol,19,3,Misfires Cyl. 12
+@petrol,19,4,Misfire recognition
+@petrol,20,1,Timing retard Cyl. 1
+@petrol,20,2,Timing retard Cyl. 2
+@petrol,20,3,Timing retard Cyl. 3
+@petrol,20,4,Timing retard Cyl. 4
+@petrol,21,1,Timing retard Cyl. 5
+@petrol,21,2,Timing retard Cyl. 6
+@petrol,21,3,Timing retard Cyl. 7
+@petrol,21,4,Timing retard Cyl. 8
+@petrol,22,1,Engine speed
+@petrol,22,2,Load
+@petrol,22,3,Timing retard Cyl. 1
+@petrol,22,4,Timing retard Cyl. 2
+@petrol,23,1,Engine speed
+@petrol,23,2,Load
+@petrol,23,3,Timing retard Cyl. 3
+@petrol,23,4,Timing retard Cyl. 4
+@petrol,24,1,Engine speed
+@petrol,24,2,Load
+@petrol,24,3,Timing retard Cyl. 5
+@petrol,24,4,Timing retard Cyl. 6
+@petrol,25,1,Engine speed
+@petrol,25,2,Load
+@petrol,25,3,Timing retard Cyl. 7
+@petrol,25,4,Timing retard Cyl. 8
+@petrol,26,1,Knock sensor Cyl. 1
+@petrol,26,2,Knock sensor Cyl. 2
+@petrol,26,3,Knock sensor Cyl. 3
+@petrol,26,4,Knock sensor Cyl. 4
+@petrol,27,1,Knock sensor Cyl. 5
+@petrol,27,2,Knock sensor Cyl. 6
+@petrol,27,3,Knock sensor Cyl. 7
+@petrol,27,4,Knock sensor Cyl. 8
+@petrol,28,1,Engine speed
+@petrol,28,2,Load
+@petrol,28,3,Coolant temperature
+@petrol,28,4,Result
+@petrol,30,1,O2 sensor B1 S1 status
+@petrol,30,2,O2 sensor B1 S2 status
+@petrol,30,3,O2 sensor B2 S1 status
+@petrol,30,4,O2 sensor B2 S2 status
+@petrol,31,1,O2 sensor B1 S1 actual
+@petrol,31,2,O2 sensor B1 S2 actual
+@petrol,31,3,O2 sensor B2 S1 actual
+@petrol,31,4,O2 sensor B2 S2 actual
+@petrol,32,1,Lambda adaptation B1 idle
+@petrol,32,2,Lambda adaptation B1 part load
+@petrol,32,3,Lambda adaptation B2 idle
+@petrol,32,4,Lambda adaptation B2 part load
+@petrol,33,1,Lambda control B1
+@petrol,33,2,O2 sensor voltage B1
+@petrol,33,3,Lambda control B2
+@petrol,33,4,O2 sensor voltage B2
+@petrol,34,1,Engine speed
+@petrol,34,2,Exhaust / catalyst temperature
+@petrol,34,3,Period length
+@petrol,34,4,Result
+@petrol,35,1,Engine speed
+@petrol,35,2,Exhaust / catalyst temperature
+@petrol,35,3,Period length
+@petrol,35,4,Result
+@petrol,36,1,O2 sensor B1 S2
+@petrol,36,2,Result
+@petrol,36,3,O2 sensor B2 S2
+@petrol,36,4,Result
+@petrol,37,1,Load
+@petrol,37,2,O2 voltage after cat B1
+@petrol,37,3,Trim shift B1
+@petrol,37,4,Result
+@petrol,38,1,Load
+@petrol,38,2,O2 voltage after cat B2
+@petrol,38,3,Trim shift B2
+@petrol,38,4,Result
+@petrol,39,1,Air mass
+@petrol,39,2,O2 sensor voltage B1
+@petrol,39,3,O2 sensor voltage B2
+@petrol,39,4,Result
+@petrol,40,1,O2 heater resistance
+@petrol,40,2,Condition
+@petrol,40,3,O2 heater resistance
+@petrol,40,4,Condition
+@petrol,41,1,O2 heater resistance
+@petrol,41,2,Condition / duty cycle
+@petrol,41,3,O2 heater resistance
+@petrol,41,4,Condition
+@petrol,42,1,O2 heater resistance
+@petrol,42,2,Condition / duty cycle
+@petrol,42,3,O2 heater resistance
+@petrol,42,4,Condition
+@petrol,43,1,Engine speed
+@petrol,43,2,Exhaust / catalyst temperature
+@petrol,43,3,O2 sensor voltage
+@petrol,43,4,Result
+@petrol,44,1,Engine speed
+@petrol,44,2,Exhaust / catalyst temperature
+@petrol,44,3,O2 sensor voltage
+@petrol,44,4,Result
+@petrol,45,1,NOx cat memory B1
+@petrol,45,2,NOx cat memory B2
+@petrol,45,3,NOx memory factor
+@petrol,45,4,Result
+@petrol,46,1,Engine speed
+@petrol,46,2,Catalyst temperature
+@petrol,46,3,Catalyst conversion
+@petrol,46,4,Result
+@petrol,47,1,Engine speed
+@petrol,47,2,Catalyst temperature
+@petrol,47,3,Catalyst conversion
+@petrol,47,4,Result
+@petrol,48,1,Operating mode
+@petrol,48,2,Test steps
+@petrol,48,3,Exothermic temperature rise
+@petrol,48,4,Result
+@petrol,49,1,Operating mode
+@petrol,49,2,Test steps
+@petrol,49,3,Exothermic temperature rise
+@petrol,49,4,Result
+@petrol,50,1,Engine speed (actual)
+@petrol,50,2,Engine speed (specified)
+@petrol,50,3,Rear defrost / A/C request
+@petrol,50,4,A/C compressor
+@petrol,51,1,Engine speed (actual)
+@petrol,51,2,Engine speed (specified)
+@petrol,51,3,Gear selector (automatic)
+@petrol,51,4,Supply voltage
+@petrol,52,1,Engine speed (actual)
+@petrol,52,2,Engine speed (specified)
+@petrol,52,3,A/C ready
+@petrol,52,4,Rear window defroster
+@petrol,53,1,Engine speed (actual)
+@petrol,53,2,Engine speed (specified)
+@petrol,53,3,Voltage
+@petrol,53,4,Alternator load
+@petrol,54,1,Engine speed
+@petrol,54,2,Operating condition
+@petrol,54,3,Throttle valve angle
+@petrol,54,4,Throttle valve angle
+@petrol,55,1,Engine speed
+@petrol,55,2,Idle air control
+@petrol,55,3,Idle air control learned value
+@petrol,55,4,Operating condition
+@petrol,56,1,Engine speed (actual)
+@petrol,56,2,Engine speed (specified)
+@petrol,56,3,Idle air control valve
+@petrol,56,4,Operating condition
+@petrol,57,1,Engine speed (actual)
+@petrol,57,2,Engine speed (specified)
+@petrol,57,3,A/C compressor
+@petrol,57,4,A/C pressure duty cycle
+@petrol,58,1,Engine speed
+@petrol,58,2,Load
+@petrol,58,3,Engine mount right
+@petrol,58,4,Engine mount left
+@petrol,60,1,Throttle angle sensor 1
+@petrol,60,2,Throttle angle sensor 2
+@petrol,60,3,Operating condition
+@petrol,60,4,Adaptation status
+@petrol,61,1,Engine speed
+@petrol,61,2,Battery voltage
+@petrol,61,3,Throttle drive control
+@petrol,61,4,Operating condition
+@petrol,62,1,Throttle angle sensor 1
+@petrol,62,2,Throttle angle sensor 2
+@petrol,62,3,Accelerator pedal sensor 1
+@petrol,62,4,Accelerator pedal sensor 2
+@petrol,63,1,Accelerator pedal sensor 1
+@petrol,63,2,Pedal sensor 1 learned
+@petrol,63,3,Kick-down point
+@petrol,63,4,Switch
+@petrol,64,1,Throttle pot 1 lower stop
+@petrol,64,2,Throttle pot 2 lower stop
+@petrol,64,3,Throttle pot 1 emergency gap
+@petrol,64,4,Throttle pot 2 emergency gap
+@petrol,66,1,Vehicle speed actual
+@petrol,66,2,Switch positions
+@petrol,66,3,Vehicle speed specified
+@petrol,66,4,Switch positions
+@petrol,70,1,EVAP purge valve opening
+@petrol,70,2,Lambda control / diagnosis
+@petrol,70,3,Idle air control / diagnosis
+@petrol,70,4,Result
+@petrol,71,1,Reed contact condition
+@petrol,71,2,DTC
+@petrol,71,3,Test status
+@petrol,71,4,Result
+@petrol,74,1,Zero position
+@petrol,74,2,Max stop
+@petrol,74,3,Potentiometer value
+@petrol,74,4,Text
+@petrol,75,1,Engine speed
+@petrol,75,2,EGR temperature
+@petrol,75,3,EGR temperature difference
+@petrol,75,4,Result
+@petrol,76,1,Engine speed
+@petrol,76,2,Intake manifold pressure
+@petrol,76,3,EGR opening
+@petrol,76,4,EGR potentiometer
+@petrol,77,1,Engine speed
+@petrol,77,2,Engine air mass
+@petrol,77,3,Secondary air mass
+@petrol,77,4,Result
+@petrol,78,1,Engine speed
+@petrol,78,2,Engine air mass
+@petrol,78,3,Secondary air mass
+@petrol,78,4,Result
+@petrol,90,1,Engine speed
+@petrol,90,2,Cam adjustment
+@petrol,90,3,Cam adjustment B1
+@petrol,90,4,Cam adjustment B2
+@petrol,91,1,Engine speed
+@petrol,91,2,Load
+@petrol,91,3,Cam adjustment
+@petrol,91,4,Cam adjustment
+@petrol,92,1,Engine speed
+@petrol,92,2,Load
+@petrol,92,3,Cam adjustment
+@petrol,92,4,Cam adjustment
+@petrol,93,1,Engine speed
+@petrol,93,2,Load
+@petrol,93,3,Cam phase B1
+@petrol,93,4,Cam phase B2
+@petrol,94,1,Engine speed
+@petrol,94,2,Cam adjustment
+@petrol,94,3,Test result B1
+@petrol,94,4,Test result B2
+@petrol,95,1,Engine speed
+@petrol,95,2,Load
+@petrol,95,3,Coolant temperature
+@petrol,95,4,Status
+@petrol,96,1,Engine speed
+@petrol,96,2,Cam adjustment
+@petrol,96,3,Test result B1
+@petrol,96,4,Test result B2
+@petrol,97,1,Engine speed
+@petrol,97,2,Load
+@petrol,97,3,Temperature / pressure
+@petrol,97,4,Intake runner change-over
+@petrol,98,1,Engine speed
+@petrol,98,2,Duty cycle
+@petrol,98,3,Adjustment specified
+@petrol,98,4,Adjustment actual
+@petrol,101,1,Engine speed
+@petrol,101,2,Load
+@petrol,101,3,Mean injection time
+@petrol,101,4,Air mass
+@petrol,102,1,Engine speed
+@petrol,102,2,Coolant temperature
+@petrol,102,3,Intake air temperature
+@petrol,102,4,Mean injection time
+@petrol,103,1,Engine speed
+@petrol,103,2,Idle air mass
+@petrol,103,3,Idle air offset adaptation
+@petrol,103,4,Result
+@petrol,104,1,Engine start temperature
+@petrol,104,2,Temperature adaptation 1
+@petrol,104,3,Temperature adaptation 2
+@petrol,104,4,Temperature adaptation 3
+@petrol,105,1,Engine speed
+@petrol,105,2,Load
+@petrol,105,3,Coolant temperature
+@petrol,105,4,Fuel shut-off
+@petrol,107,1,Engine speed
+@petrol,107,2,Lambda control B1 (average)
+@petrol,107,3,Lambda control B2 (average)
+@petrol,107,4,Result
+@petrol,110,1,Engine speed
+@petrol,110,2,Coolant temperature
+@petrol,110,3,Mean injection time
+@petrol,110,4,Throttle valve angle
+@petrol,111,1,Boost adaptation RPM range 1
+@petrol,111,2,Boost adaptation RPM range 2
+@petrol,111,3,Boost adaptation RPM range 3
+@petrol,111,4,Boost adaptation RPM range 4
+@petrol,112,1,Exhaust temperature B1
+@petrol,112,2,Enrichment factor B1
+@petrol,112,3,Exhaust temperature B2
+@petrol,112,4,Enrichment factor B2
+@petrol,113,1,Load
+@petrol,113,2,Engine speed
+@petrol,113,3,Load
+@petrol,113,4,Throttle valve angle
+@petrol,114,1,Specified load (uncorrected)
+@petrol,114,2,Specified load (corrected)
+@petrol,114,3,Actual load
+@petrol,114,4,Duty cycle
+@petrol,115,1,Engine speed
+@petrol,115,2,Load
+@petrol,115,3,Boost pressure specified
+@petrol,115,4,Boost pressure actual
+@petrol,116,1,Engine speed
+@petrol,116,2,Fuel correction factor
+@petrol,116,3,Coolant temp correction
+@petrol,116,4,Intake air temp correction
+@petrol,117,1,Engine speed
+@petrol,117,2,Accelerator pedal position
+@petrol,117,3,Throttle valve angle
+@petrol,117,4,Boost pressure specified
+@petrol,118,1,Engine speed
+@petrol,118,2,Intake air temperature
+@petrol,118,3,Boost control valve duty cycle
+@petrol,118,4,Boost pressure before throttle
+@petrol,119,1,Engine speed
+@petrol,119,2,Boost control valve adaptation
+@petrol,119,3,Boost control valve duty cycle
+@petrol,119,4,Boost pressure before throttle
+@petrol,130,1,Engine outlet temperature
+@petrol,130,2,Radiator outlet temperature
+@petrol,130,3,Duty cycle
+@petrol,130,4,Thermostat
+@petrol,131,1,Engine outlet temperature
+@petrol,131,2,Engine outlet temperature specified
+@petrol,131,3,Radiator outlet temperature
+@petrol,131,4,Duty cycle
+@petrol,132,1,Radiator outlet temp specified
+@petrol,132,2,Engine / radiator temp difference
+@petrol,132,3,Heater pre-run potentiometer
+@petrol,132,4,Cooling status
+@petrol,134,1,Oil temperature
+@petrol,134,2,Ambient temperature
+@petrol,134,3,Intake air temperature
+@petrol,134,4,Engine outlet temperature
+@petrol,135,1,Temperature
+@petrol,135,2,Radiator outlet specified
+@petrol,135,3,Duty cycle
+@petrol,135,4,Coolant fan 1
+@petrol,136,1,Relay 1
+@petrol,136,2,Relay 2
+@petrol,136,3,Relay 3
+@petrol,136,4,Relay 4
+@petrol,137,1,A/C inlet
+@petrol,137,2,Compressor
+@petrol,137,3,A/C high pressure
+@petrol,137,4,Fan request from A/C

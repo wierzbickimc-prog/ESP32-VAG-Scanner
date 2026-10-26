@@ -1,0 +1,3 @@
+[submodule "kw1281test"]
+	path = kw1281test
+	url = https://github.com/gmenounos/kw1281test.git

@@ -1,0 +1,17 @@
+.DS_Store
+kwcore/kwcli
+kwcore/test_kw1281
+mac/.build/
+esp32/build/
+esp32/managed_components/
+esp32/sdkconfig
+esp32/sdkconfig.old
+esp32/dependencies.lock
+kw1281test/bin/
+kw1281test/obj/
+esp32/build.log
+ross-tech-fault-codes.csv
+KW1281Test.log
+.vscode/
+kwcore/fault_types.h
+assets/source/
