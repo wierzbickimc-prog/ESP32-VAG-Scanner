@@ -6,7 +6,7 @@ import html, json, os, re, urllib.parse, urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "..", "source")
-UA = {"User-Agent": "esp32-vag-scanner/1.0 (https://github.com/wierzbickimc-prog/ESP32-VAG-Scanner)"}
+UA = {"User-Agent": "esp32-vag-scanner/1.0 (wierzbickimc@gmail.com)"}
 
 # name -> Commons file title
 PHOTOS = {
