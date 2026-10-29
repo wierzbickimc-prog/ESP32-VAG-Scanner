@@ -17,5 +17,9 @@ let package = Package(
             path: "Sources/ESP32VAGScanner",
             resources: [.process("Resources")]
         ),
+        .testTarget(
+            name: "ESP32VAGScannerTests",
+            dependencies: ["ESP32VAGScanner", "KWCore"]
+        ),
     ]
 )

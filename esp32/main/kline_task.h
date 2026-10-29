@@ -33,7 +33,7 @@ typedef struct {
 typedef enum {
     KL_EV_CABLE,        /* cable attached / detached: `ok`; `demo` while simulating */
     KL_EV_PROGRESS,     /* scan probing `address` (`count` = index, `total`) */
-    KL_EV_MODULE,       /* scan found `address`, `ident`, `protocol`; ok=false for KWP2000 */
+    KL_EV_MODULE,       /* scan/read identified `address`, `ident`, `protocol`; ok=false for KWP2000 */
     KL_EV_FAULTS,       /* `count` codes in `faults`, or `err` */
     KL_EV_GROUP,        /* `count` values in `values` named by `labels`, or `err` */
     KL_EV_DONE,         /* request `op` finished (always sent last) */

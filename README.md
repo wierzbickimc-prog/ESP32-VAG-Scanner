@@ -35,6 +35,10 @@ All screenshots show the simulated EuroVan (demo mode).
 
 ## Features
 
+- Open a module directly from the landing screen and automatically read its fault codes,
+  without scanning the car first. Both apps show **01 Engine**, **02 Transmission**,
+  **03 ABS**, **08 HVAC**, **15 Airbags**, and **17 Instruments**, with **More modules** for
+  the remaining known addresses. Identification and faults use one connection.
 - Scan for controllers (common addresses, or all of 01-7F).
 - Controller identification (part number, component, coding).
 - Fault codes with descriptions, OBD-II P-codes, the fault type ("Short to Ground") and the
@@ -43,6 +47,16 @@ All screenshots show the simulated EuroVan (demo mode).
 - Recognises a few specific cars from their part numbers (T4 EuroVan, Mk3 Golf) and shows a
   matching photo.
 - Demo mode with simulated cars, so you can try it without a car or cable.
+
+Connecting the cable does not start vehicle communication. Tap **Scan car** or a
+module card to begin; the ESP32 also stays idle if its display cannot initialize.
+
+The **Scan car** button still discovers controllers as before. Module cards start at
+**Not checked** and update after a read; a missing controller shows **No response** rather
+than a clean fault result. Not every car has every controller. Addresses use hexadecimal
+notation (for example, **17** means instruments).
+
+<img src="docs/screenshots/mac_direct_modules.png" alt="macOS landing screen with six module shortcuts available before scanning" width="800">
 
 KW1281 controllers store only a fault code and one status byte. There's no mileage,
 occurrence count or freeze-frame data; that arrived with KWP2000 and UDS, which this tool
@@ -89,6 +103,12 @@ cd mac
 swift run ESP32VAGScanner                   # pick the cable in the app
 swift run ESP32VAGScanner --demo            # straight into the simulated EuroVan
 swift run ESP32VAGScanner --demo=golf --overview
+```
+
+Direct-module integration tests use the simulated cars and require Xcode's XCTest framework:
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path mac
 ```
 
 **ESP32-P4** (ESP-IDF v5.5.6)

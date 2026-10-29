@@ -85,6 +85,11 @@ static void do_faults(const kl_request_t *req)
 {
     static FaultCode codes[64];
     int n = connect(req->address, 3);
+    if (n == KW_OK || n == KW_EKWP2000) {
+        emit((kl_event_t){ .type = KL_EV_MODULE, .op = req->op, .ok = n == KW_OK,
+                           .address = req->address, .protocol = s_session.protocol,
+                           .ident = s_session.ident });
+    }
     if (n == KW_OK) {
         n = req->op == KL_CLEAR ? kw_clear_fault_codes(&s_session, codes, 64)
                                 : kw_read_fault_codes(&s_session, codes, 64);

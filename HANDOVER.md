@@ -1,5 +1,28 @@
 # Handover: ESP32 VAG Scanner (macOS + ESP32-P4)
 
+## Direct module access (2026-10-29)
+
+- Both landing screens always show 01/02/03/08/15/17, plus More modules for the
+  remaining known addresses. Scan remains optional and updates cards by address.
+- Opening a card automatically reads faults. Identification and fault reading share
+  one KW1281 connection; the ESP32 worker emits MODULE before FAULTS for direct reads.
+- Unchecked cards, no response, unsupported KWP2000, and zero faults have distinct states.
+  macOS clears results when changing cables; reopening a module refreshes its faults.
+- The P4 header is shorter so all six shortcuts fit. Debug console: `module HEX`
+  opens and reads directly; `modules` opens the picker. `open N` now indexes the home
+  cards (the six shortcuts come first), rather than scan discovery order.
+- Verified: macOS build; six XCTest integration tests against simulated cars; protocol
+  tests; ESP-IDF build; host exercise of the ESP32 fault worker against the fake ECU
+  (direct/repeated/missing/unsupported/recovery, one connect call per read). macOS
+  landing screen visually checked. No board connected for flashing or touch validation;
+  real-car timing remains unverified.
+- Startup is manual on both platforms. The ESP32 headless fallback only logs cable
+  status; it never queues a scan or chains an engine fault read. A failed LVGL lock
+  also enters this idle fallback. Restore the display and restart to use the controls.
+  Host regression coverage: `python3 esp32/tests/run_startup_test.py`.
+- Run app integration tests with
+  `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test --package-path mac`.
+
 ## Status (2026-10-25, evening)
 
 - **Task 1 done.** `kwcore` rewritten. The simulated car in `kwcore/fake_ecu.c` (engine 01,

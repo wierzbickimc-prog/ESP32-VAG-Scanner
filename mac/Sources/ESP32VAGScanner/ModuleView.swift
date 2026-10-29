@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ModuleView: View {
     let module: Module
+    private var currentModule: Module { model.modules.first { $0.address == module.address } ?? module }
     @EnvironmentObject var model: AppModel
 
     private enum Tab { case faults, live }
@@ -30,7 +31,9 @@ struct ModuleView: View {
                             Text(module.name)
                                 .font(.system(size: 36, weight: .bold))
                                 .foregroundStyle(Color.textPrimary)
-                            Text(verbatim: "Address \(module.hexAddress) · KW\(module.protocolVersion)")
+                            Text(currentModule.protocolVersion == 0
+                                 ? "Address \(module.hexAddress) · Not connected"
+                                 : "Address \(module.hexAddress) · KW\(currentModule.protocolVersion)")
                                 .foregroundStyle(Color.textMuted)
                         }
                     }
@@ -38,7 +41,7 @@ struct ModuleView: View {
 
                 VStack(alignment: .leading, spacing: 22) {
                     VStack(alignment: .leading, spacing: 4) {
-                        ForEach(module.identLines, id: \.self) { line in
+                        ForEach(currentModule.identLines, id: \.self) { line in
                             Text(line).font(.system(.callout, design: .monospaced))
                         }
                     }
@@ -53,6 +56,7 @@ struct ModuleView: View {
                     .pickerStyle(.segmented)
                     .labelsHidden()
                     .frame(maxWidth: 360)
+                    .disabled(currentModule.protocolVersion == 0 || !currentModule.supported)
 
                     switch tab {
                     case .faults: faultSection
@@ -81,7 +85,7 @@ struct ModuleView: View {
             if CommandLine.arguments.contains("--live") {
                 tab = .live
                 readGroup(once: false)
-            } else if faults == nil {
+            } else if faults == nil && model.moduleErrors[module.address] == nil {
                 readFaults()
             }
         }
@@ -93,7 +97,7 @@ struct ModuleView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
                 Button { readFaults() } label: {
-                    Label("Read faults", systemImage: "arrow.down.circle")
+                    Label(model.moduleErrors[module.address] == nil ? "Read faults" : "Retry", systemImage: "arrow.down.circle")
                 }
                 .buttonStyle(.borderedProminent)
                 Button(role: .destructive) { confirmClear = true } label: {
@@ -101,10 +105,12 @@ struct ModuleView: View {
                 }
                 .disabled(faults?.isEmpty ?? true)
                 Spacer()
-                Text(faultStatus).font(.callout).foregroundStyle(Color.textMuted)
             }
             .controlSize(.large)
             .disabled(model.busy)
+            Text(model.moduleStatus[module.address] ?? faultStatus)
+                .font(.callout)
+                .foregroundStyle(model.moduleErrors[module.address] == nil ? Color.textMuted : Color.warn)
 
             if let faults {
                 if faults.isEmpty {
@@ -159,7 +165,7 @@ struct ModuleView: View {
             .controlSize(.large)
             .disabled(liveStop != nil && false)
 
-            if !values.isEmpty && kw_labels_standard(module.ident, Int32(group)) != 0 {
+            if !values.isEmpty && kw_labels_standard(currentModule.ident, Int32(group)) != 0 {
                 Label("Labels from VW's standard petrol-engine groups: typical, not confirmed for this ECU",
                       systemImage: "info.circle")
                     .font(.caption)
@@ -198,14 +204,11 @@ struct ModuleView: View {
     }
 
     private func readFaults() {
-        perform(status: $faultStatus, label: "Reading…") {
-            model.faults[module.address] = try await model.kline.readFaults(port: model.port, baud: model.baud,
-                                                                            address: module.address)
-            faultStatus = "Read \(Date.now.formatted(date: .omitted, time: .shortened))"
-        }
+        model.openModule(address: module.address)
     }
 
     private func clearFaults() {
+        model.moduleStatus[module.address] = nil
         perform(status: $faultStatus, label: "Clearing…") {
             let remaining = try await model.kline.clearFaults(port: model.port, baud: model.baud, address: module.address)
             model.faults[module.address] = remaining
@@ -228,6 +231,7 @@ struct ModuleView: View {
     }
 
     private func perform(status: Binding<String>, label: String, _ work: @escaping () async throws -> Void) {
+        guard !model.busy else { return }
         model.busy = true
         status.wrappedValue = label
         Task {

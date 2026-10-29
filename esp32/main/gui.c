@@ -6,6 +6,7 @@
 #include "gui.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "assets.h"
 #include "board_display.h"
@@ -35,12 +36,14 @@ typedef struct {
     int protocol;
     bool supported;
     int faults; /* -1 until read */
+    int error;
     char ident[KW_IDENT_MAX];
-    lv_obj_t *status;
+    lv_obj_t *status, *ident_label;
 } module_t;
 
 static module_t s_modules[MAX_MODULES];
 static int s_module_count;
+static const uint8_t LANDING_ADDRESSES[] = { 0x01, 0x02, 0x03, 0x08, 0x15, 0x17 };
 static int s_current = -1;
 
 static bool s_cable, s_demo, s_busy, s_scanning, s_live, s_scanned;
@@ -55,7 +58,7 @@ static int s_demo_next;
 static lv_obj_t *s_home, *s_hero, *s_title, *s_subtitle;
 static lv_obj_t *s_pill_dot, *s_pill_label;
 static lv_obj_t *s_scan_label, *s_progress, *s_scan_status;
-static lv_obj_t *s_count_label, *s_grid, *s_grid_empty;
+static lv_obj_t *s_count_label, *s_grid;
 /* detail */
 static lv_obj_t *s_detail, *s_detail_hero, *s_detail_name, *s_detail_sub, *s_detail_ident;
 static lv_obj_t *s_tab_faults, *s_tab_live, *s_panel_faults, *s_panel_live;
@@ -261,8 +264,11 @@ static void set_card_status(module_t *m)
     if (!m->supported) {
         lv_label_set_text(m->status, "KWP2000  " LV_SYMBOL_BULLET "  not supported");
         lv_obj_set_style_text_color(m->status, col(C_MUTED), 0);
+    } else if (m->error) {
+        lv_label_set_text(m->status, m->error == KW_ENOWAKE ? "No response - tap to retry" : "Read failed - tap to retry");
+        lv_obj_set_style_text_color(m->status, col(C_WARN), 0);
     } else if (m->faults < 0) {
-        lv_label_set_text(m->status, "Tap to read faults");
+        lv_label_set_text(m->status, "Not checked");
         lv_obj_set_style_text_color(m->status, col(C_MUTED), 0);
     } else if (m->faults == 0) {
         lv_label_set_text(m->status, LV_SYMBOL_OK "  No faults");
@@ -305,29 +311,91 @@ static void add_card(int idx)
     lv_obj_set_width(name, 248);
     lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
 
-    lv_obj_t *ident = text(card, &lv_font_montserrat_16, C_MUTED, m->supported ? m->ident : "");
+    lv_obj_t *ident = text(card, &lv_font_montserrat_16, C_MUTED,
+                          m->protocol == 0 ? "Tap to connect" : m->ident);
+    m->ident_label = ident;
     lv_obj_set_pos(ident, 76, 36);
     lv_obj_set_size(ident, 248, 22);
     lv_label_set_long_mode(ident, LV_LABEL_LONG_DOT);
 
     m->status = text(card, &lv_font_montserrat_16, C_MUTED, "");
     lv_obj_align(m->status, LV_ALIGN_BOTTOM_LEFT, 76, 0);
+    lv_obj_set_width(m->status, 248);
+    lv_label_set_long_mode(m->status, LV_LABEL_LONG_DOT);
     set_card_status(m);
 
-    if (!m->supported) {
-        lv_obj_add_state(card, LV_STATE_DISABLED);
-        lv_obj_set_style_opa(card, LV_OPA_60, LV_STATE_DISABLED);
-    }
-    lv_obj_set_hidden(s_grid_empty, true);
     lv_obj_fade_in(card, 300, 0);
+}
+
+static int module_index(uint8_t address)
+{
+    for (int i = 0; i < s_module_count; i++)
+        if (s_modules[i].address == address)
+            return i;
+    return -1;
+}
+
+static int ensure_module(uint8_t address)
+{
+    int idx = module_index(address);
+    if (idx >= 0 || s_module_count == MAX_MODULES)
+        return idx;
+    idx = s_module_count++;
+    s_modules[idx] = (module_t){ .address = address, .supported = true, .faults = -1 };
+    add_card(idx);
+    return idx;
+}
+
+static int found_count(void)
+{
+    int count = 0;
+    for (int i = 0; i < s_module_count; i++)
+        count += s_modules[i].protocol != 0;
+    return count;
 }
 
 static void clear_modules(void)
 {
+    s_current = -1;
     s_module_count = 0;
     lv_obj_clean(s_grid);
     lv_label_set_text(s_count_label, "");
-    lv_obj_set_hidden(s_grid_empty, false);
+    for (size_t i = 0; i < sizeof(LANDING_ADDRESSES); i++)
+        ensure_module(LANDING_ADDRESSES[i]);
+}
+
+static void on_more_pick(lv_event_t *e)
+{
+    uint8_t address = (uint8_t)(intptr_t)lv_event_get_user_data(e);
+    lv_obj_t *mbox = lv_obj_get_parent(lv_obj_get_parent(lv_event_get_target(e)));
+    lv_msgbox_close_async(mbox);
+    if (!s_busy)
+        open_module_index(ensure_module(address));
+}
+
+static void on_more_modules(lv_event_t *e)
+{
+    (void)e;
+    if (s_busy)
+        return;
+    lv_obj_t *mbox = lv_msgbox_create(NULL);
+    lv_obj_set_size(mbox, 680, 880);
+    lv_msgbox_add_title(mbox, "More modules");
+    lv_msgbox_add_text(mbox, "Choose a controller to read its faults directly.");
+    lv_obj_t *content = lv_msgbox_get_content(mbox);
+    for (int address = 1; address <= 0x7F; address++) {
+        const char *name = kw_module_name(address);
+        bool landing = false;
+        for (size_t i = 0; i < sizeof(LANDING_ADDRESSES); i++)
+            landing |= LANDING_ADDRESSES[i] == address;
+        if (!name || landing)
+            continue;
+        char label[64];
+        snprintf(label, sizeof(label), "%02X  %s", address, name);
+        lv_obj_t *b = button(content, label, C_SURFACE2, C_TEXT, on_more_pick, (void *)(intptr_t)address);
+        lv_obj_set_size(b, LV_PCT(100), 64);
+    }
+    lv_msgbox_add_close_button(mbox);
 }
 
 /* ---- scanning ------------------------------------------------------------- */
@@ -448,8 +516,11 @@ static void build_home(void)
     lv_obj_set_style_bg_color(s_home, col(C_BG), 0);
     lv_obj_set_scrollable(s_home, false);
 
-    s_hero = lv_image_create(s_home);
-    lv_obj_set_pos(s_hero, 0, 0);
+    lv_obj_t *header = plain(s_home);
+    lv_obj_set_size(header, SCREEN_W, 420);
+    s_hero = lv_image_create(header);
+    lv_obj_set_pos(s_hero, 0, -120);
+    scrim(header, 220, 200);
 
     /* top bar */
     lv_obj_t *brand = text(s_home, &lv_font_montserrat_16, C_TEXT, "ESP32 VAG SCANNER");
@@ -474,61 +545,60 @@ static void build_home(void)
 
     /* car name over the bottom of the photo */
     s_title = text(s_home, &lv_font_montserrat_48, C_TEXT, "");
-    lv_obj_set_pos(s_title, 32, 520);
+    lv_obj_set_pos(s_title, 32, 308);
     lv_obj_set_clickable(s_title, true);
     lv_obj_set_ext_click_area(s_title, 16);
     lv_obj_add_event_cb(s_title, on_title, LV_EVENT_CLICKED, NULL);
     s_subtitle = text(s_home, &lv_font_montserrat_20, C_MUTED, "");
-    lv_obj_set_pos(s_subtitle, 34, 582);
+    lv_obj_set_pos(s_subtitle, 34, 370);
 
     /* scan, and demo beside it */
     lv_obj_t *scan = button(s_home, NULL, C_ACCENT, C_TEXT, on_scan, NULL);
     lv_obj_add_event_cb(scan, on_scan_hold, LV_EVENT_LONG_PRESSED, NULL);
-    lv_obj_set_size(scan, 540, 96);
-    lv_obj_set_pos(scan, 32, 636);
+    lv_obj_set_size(scan, 540, 80);
+    lv_obj_set_pos(scan, 32, 426);
     lv_obj_set_style_radius(scan, 24, 0);
     s_scan_label = text(scan, &lv_font_montserrat_28, C_TEXT, LV_SYMBOL_REFRESH "  Scan car");
     lv_obj_center(s_scan_label);
 
     lv_obj_t *demo = button(s_home, LV_SYMBOL_PLAY "  Demo", C_SURFACE, C_WARN, on_demo, NULL);
-    lv_obj_set_size(demo, 180, 96);
-    lv_obj_set_pos(demo, 588, 636);
+    lv_obj_set_size(demo, 180, 80);
+    lv_obj_set_pos(demo, 588, 426);
     lv_obj_set_style_radius(demo, 24, 0);
     lv_obj_set_style_border_color(demo, col(C_WARN), 0);
     lv_obj_set_style_border_width(demo, 2, 0);
 
     s_progress = lv_bar_create(s_home);
     lv_obj_set_size(s_progress, 736, 6);
-    lv_obj_set_pos(s_progress, 32, 746);
+    lv_obj_set_pos(s_progress, 32, 520);
     lv_obj_set_style_bg_color(s_progress, col(C_SURFACE2), 0);
     lv_obj_set_style_bg_color(s_progress, col(C_ACCENT), LV_PART_INDICATOR);
     lv_bar_set_range(s_progress, 0, 100);
     lv_obj_set_hidden(s_progress, true);
 
     s_scan_status = text(s_home, &lv_font_montserrat_16, C_MUTED, "");
-    lv_obj_set_pos(s_scan_status, 34, 762);
+    lv_obj_set_pos(s_scan_status, 34, 540);
 
     /* controllers */
-    lv_obj_t *heading = text(s_home, &lv_font_montserrat_16, C_MUTED, "CONTROLLERS");
+    lv_obj_t *heading = text(s_home, &lv_font_montserrat_16, C_MUTED, "OPEN A MODULE");
     lv_obj_set_style_text_letter_space(heading, 3, 0);
-    lv_obj_set_pos(heading, 34, 808);
+    lv_obj_set_pos(heading, 34, 588);
     s_count_label = text(s_home, &lv_font_montserrat_16, C_MUTED, "");
-    lv_obj_align(s_count_label, LV_ALIGN_TOP_RIGHT, -34, 808);
+    lv_obj_align(s_count_label, LV_ALIGN_TOP_RIGHT, -34, 588);
 
     s_grid = plain(s_home);
     lv_obj_set_scrollable(s_grid, true);
     lv_obj_set_scroll_dir(s_grid, LV_DIR_VER);
-    lv_obj_set_size(s_grid, 736, SCREEN_H - 842 - 16);
-    lv_obj_set_pos(s_grid, 32, 842);
+    lv_obj_set_size(s_grid, 736, 548);
+    lv_obj_set_pos(s_grid, 32, 622);
     lv_obj_set_flex_flow(s_grid, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_style_pad_row(s_grid, 16, 0);
     lv_obj_set_style_pad_column(s_grid, 16, 0);
 
-    s_grid_empty = text(s_home, &lv_font_montserrat_20, C_MUTED,
-                        "Ignition on, then tap Scan.\nNo car here? Tap Demo to explore.");
-    lv_obj_set_style_text_align(s_grid_empty, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_line_space(s_grid_empty, 8, 0);
-    lv_obj_align(s_grid_empty, LV_ALIGN_TOP_MID, 0, 940);
+    lv_obj_t *more = button(s_home, "More modules...", C_SURFACE, C_TEXT, on_more_modules, NULL);
+    lv_obj_set_size(more, 736, 64);
+    lv_obj_set_pos(more, 32, 1184);
+    clear_modules();
 }
 
 /* ---- detail screen -------------------------------------------------------- */
@@ -548,7 +618,8 @@ static void show_tab(bool live)
 
 static void submit_current(kl_op_t op)
 {
-    if (s_busy || s_current < 0)
+    if (s_busy || s_current < 0 ||
+        (op != KL_FAULTS && (!s_modules[s_current].supported || s_modules[s_current].protocol == 0)))
         return;
     kl_request_t req = { .op = op, .address = s_modules[s_current].address, .group = s_group };
     if (kline_submit(&req))
@@ -561,6 +632,7 @@ static void on_back(lv_event_t *e)
         s_restart_live = false;
         kline_cancel();
     }
+    s_group_pending = false;
     s_current = -1;
     go_home(e);
 }
@@ -574,7 +646,14 @@ static void read_faults(void)
 {
     if (s_busy)
         return;
-    lv_label_set_text(s_fault_status, "Reading fault codes...");
+    if (s_current < 0)
+        return;
+    module_t *m = &s_modules[s_current];
+    m->faults = -1;
+    m->error = 0;
+    set_card_status(m);
+    lv_obj_clean(s_fault_list);
+    lv_label_set_text(s_fault_status, "Connecting and reading faults...");
     submit_current(KL_FAULTS);
 }
 
@@ -599,7 +678,7 @@ static void on_clear_cancel(lv_event_t *e)
 static void on_clear(lv_event_t *e)
 {
     (void)e;
-    if (s_busy)
+    if (s_busy || s_current < 0 || !s_modules[s_current].supported || s_modules[s_current].faults <= 0)
         return;
     lv_obj_t *mbox = lv_msgbox_create(NULL);
     lv_obj_set_width(mbox, 600);
@@ -625,6 +704,8 @@ static void read_group_once(void)
 
 static void step_group(int delta)
 {
+    if (s_current < 0 || !s_modules[s_current].supported || s_modules[s_current].protocol == 0)
+        return;
     s_group += delta;
     if (s_group < 0)
         s_group = 0;
@@ -654,7 +735,7 @@ static void toggle_live(void)
         kline_cancel();
         return;
     }
-    if (s_busy)
+    if (s_busy || s_current < 0 || !s_modules[s_current].supported || s_modules[s_current].protocol == 0)
         return;
     s_live = true;
     lv_label_set_text(s_live_label, LV_SYMBOL_STOP "  Stop");
@@ -731,6 +812,8 @@ static void build_detail(void)
     lv_obj_set_style_border_color(clear, col(C_ERR), 0);
     lv_obj_set_style_border_width(clear, 2, 0);
     s_fault_status = text(s_panel_faults, &lv_font_montserrat_16, C_MUTED, "");
+    lv_obj_set_width(s_fault_status, LV_PCT(100));
+    lv_label_set_long_mode(s_fault_status, LV_LABEL_LONG_WRAP);
     s_fault_list = column(s_panel_faults, 12);
     lv_obj_set_flex_grow(s_fault_list, 1);
     lv_obj_set_scrollable(s_fault_list, true);
@@ -782,7 +865,7 @@ static void build_detail(void)
 
 static void open_module_index(int idx)
 {
-    if (idx < 0 || idx >= s_module_count || !s_modules[idx].supported)
+    if (s_busy || idx < 0 || idx >= s_module_count)
         return;
     module_t *m = &s_modules[idx];
     if (s_live) {
@@ -791,15 +874,20 @@ static void open_module_index(int idx)
     }
     s_current = idx;
     lv_label_set_text(s_detail_name, module_name(m->address));
-    lv_label_set_text_fmt(s_detail_sub, "Address %02X  " LV_SYMBOL_BULLET "  KW%d", m->address, m->protocol);
+    if (m->protocol)
+        lv_label_set_text_fmt(s_detail_sub, "Address %02X  " LV_SYMBOL_BULLET "  KW%d", m->address, m->protocol);
+    else
+        lv_label_set_text_fmt(s_detail_sub, "Address %02X", m->address);
     lv_label_set_text(s_detail_ident, m->ident);
-    lv_label_set_text(s_fault_status, "Tap Read faults to ask the controller.");
+    s_group_pending = false;
+    lv_label_set_text(s_fault_status, "Connecting...");
     lv_obj_clean(s_fault_list);
     lv_label_set_text(s_group_status, "Use - and + to pick a measuring group, then Live.");
     for (int i = 0; i < MAX_VALUES; i++)
         lv_obj_set_hidden(s_value_tiles[i], true);
     show_tab(false);
     lv_screen_load_anim(s_detail, LV_SCREEN_LOAD_ANIM_MOVE_LEFT, 220, 0, false);
+    read_faults();
 }
 
 /* ---- results -------------------------------------------------------------- */
@@ -882,7 +970,7 @@ static void add_fault_card(const FaultCode *fc)
     if (type)
         text(card, &lv_font_montserrat_20, intermittent ? C_WARN : C_ERR, type);
 
-    lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_clickable(card, true);
     lv_obj_add_event_cb(card, on_fault_card, LV_EVENT_CLICKED, (void *)(intptr_t)(fc->dtc << 8 | fc->status));
     lv_obj_fade_in(card, 250, 0);
 }
@@ -890,8 +978,9 @@ static void add_fault_card(const FaultCode *fc)
 static void show_faults(const kl_event_t *ev)
 {
     for (int i = 0; i < s_module_count; i++) {
-        if (s_modules[i].address == ev->address && ev->ok) {
-            s_modules[i].faults = ev->count;
+        if (s_modules[i].address == ev->address) {
+            s_modules[i].error = ev->ok ? 0 : ev->err;
+            s_modules[i].faults = ev->ok ? ev->count : -1;
             set_card_status(&s_modules[i]);
         }
     }
@@ -899,7 +988,10 @@ static void show_faults(const kl_event_t *ev)
         return;
     lv_obj_clean(s_fault_list);
     if (!ev->ok) {
-        lv_label_set_text_fmt(s_fault_status, LV_SYMBOL_CLOSE "  %s", kw_strerror(ev->err));
+        lv_label_set_text_fmt(s_fault_status, LV_SYMBOL_CLOSE "  %s",
+                              ev->err == KW_ENOWAKE ? "No response. Check ignition and address, then tap Read faults to retry."
+                              : ev->err == KW_EKWP2000 ? "KWP2000 is not supported."
+                              : kw_strerror(ev->err));
         return;
     }
     if (ev->count == 0) {
@@ -952,7 +1044,7 @@ static void scan_finished(void)
     s_scanned = true;
     lv_label_set_text(s_scan_label, LV_SYMBOL_REFRESH "  Scan again");
     lv_obj_set_hidden(s_progress, true);
-    if (s_module_count == 0) {
+    if (found_count() == 0) {
         lv_label_set_text(s_scan_status, "No controllers answered. Is the ignition on?");
         return;
     }
@@ -981,16 +1073,22 @@ void gui_on_kline_event(const kl_event_t *ev)
                               name ? name : "");
         break;
     }
-    case KL_EV_MODULE:
-        if (s_module_count < MAX_MODULES) {
-            module_t *m = &s_modules[s_module_count];
-            m->address = ev->address;
+    case KL_EV_MODULE: {
+        int idx = ensure_module(ev->address);
+        if (idx >= 0) {
+            module_t *m = &s_modules[idx];
             m->protocol = ev->protocol;
             m->supported = ev->ok;
             m->faults = -1;
+            m->error = 0;
             snprintf(m->ident, sizeof(m->ident), "%s", ev->ident);
-            add_card(s_module_count++);
-            lv_label_set_text_fmt(s_count_label, "%d found", s_module_count);
+            lv_label_set_text(m->ident_label, m->ident);
+            set_card_status(m);
+            lv_label_set_text_fmt(s_count_label, "%d found", found_count());
+            if (s_current == idx) {
+                lv_label_set_text_fmt(s_detail_sub, "Address %02X  " LV_SYMBOL_BULLET "  KW%d", m->address, m->protocol);
+                lv_label_set_text(s_detail_ident, m->ident);
+            }
             if (ev->ok)
                 kw_car_vote(&s_votes, ev->ident);
             KwCar best = kw_car_best(&s_votes);
@@ -1000,6 +1098,7 @@ void gui_on_kline_event(const kl_event_t *ev)
             }
         }
         break;
+    }
     case KL_EV_FAULTS:
         show_faults(ev);
         break;
@@ -1018,7 +1117,7 @@ void gui_on_kline_event(const kl_event_t *ev)
                 toggle_live();
             }
         }
-        if (ev->op == KL_GROUP && s_group_pending) {
+        if (s_group_pending && s_current >= 0) {
             s_group_pending = false;
             read_group_once();
         }
@@ -1053,6 +1152,13 @@ void gui_debug(const char *cmd)
             start_demo(FAKE_CAR_HARLEQUIN);
         else
             start_demo(FAKE_CAR_GOLF4);
+    } else if (strncmp(cmd, "module ", 7) == 0 && !s_busy) {
+        char *end;
+        long address = strtol(cmd + 7, &end, 16);
+        if (*end == '\0' && address >= 1 && address <= 0x7F)
+            open_module_index(ensure_module((uint8_t)address));
+    } else if (strcmp(cmd, "modules") == 0) {
+        on_more_modules(NULL);
     } else if (strncmp(cmd, "open ", 5) == 0) {
         open_module_index(cmd[5] - '0');
     } else if (strcmp(cmd, "back") == 0) {

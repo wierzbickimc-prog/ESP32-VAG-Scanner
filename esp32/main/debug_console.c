@@ -3,7 +3,9 @@
  * captured from the Mac (assets/tools/p4shot.py):
  *   shot              half-size screenshot: "SHOT w h stride", base64 rows, "ENDSHOT"
  *   demo <car>        scan a simulated car (eurovan / harlequin / golf)
- *   open <n>          open the n-th controller
+ *   module <hex>      directly open and read a controller (no scan)
+ *   modules           show the More modules picker
+ *   open <n>          open and read the n-th card
  *   faults | live     read faults / toggle live data on the open controller
  *   plus | minus      step the measuring group
  *   back | home | credits | chooser

@@ -16,7 +16,7 @@ against a fake ECU (`make -C ../kwcore test`).
 | `main/gui.c` | LVGL 9 UI: scan, module detail, faults, clear, measuring groups |
 | `main/board_display.c` | JD9365 panel + GSL3680 touch bring-up, LVGL via esp_lvgl_port |
 | `components/jc8012p4a1c/` | Panel/touch drivers vendored from chipguyhere/JC8012P4A1C_display (MIT) |
-| `main/main.c` | Starts the UI, or headless mode if the display fails to come up |
+| `main/main.c` | Starts the UI; stays idle if the display is unavailable |
 
 ## Build
 
@@ -33,6 +33,18 @@ idf.py -p /dev/cu.usbserial-XXXX flash monitor   # the board's CH340 port
 Components (`usb_host_cdc_acm`, `lvgl`, `esp_lvgl_port`, `esp_lcd_touch`) are
 fetched automatically from `main/idf_component.yml`.
 
+## Direct module access
+
+The home screen always offers 01 Engine, 02 Transmission, 03 ABS, 08 HVAC,
+15 Airbags, and 17 Instruments. Tap a card to connect to that address and read its
+faults automatically; no scan is needed. **More modules** lists the other known
+addresses, and **Scan car** still discovers controllers. Addresses are hexadecimal.
+A controller that does not answer stays distinct from one reporting no faults.
+
+The serial debug console also accepts `module 01` (direct open/read by hex address)
+and `modules` (the More modules picker). `open N` opens the N-th home card; the first
+six cards remain in the order above even after a scan.
+
 ## Fault code descriptions
 
 If `../ross-tech-fault-codes.csv` (code,meaning) exists at build time it is embedded
@@ -41,19 +53,29 @@ show as codes only. The file is gitignored.
 
 ## First test
 
-If the panel fails to come up, the firmware falls back to headless mode and
-logs to the serial monitor. With the cable in the P4 and in the car (ignition
-on), headless mode should show:
+Connecting the cable prepares the USB interface. It does not wake or query any
+vehicle controller. With the ignition on, tap **Scan car** or a module card to
+start communication.
+
+If the panel or UI lock fails to initialize, the firmware logs the failure and
+remains idle. It does not scan or read engine faults automatically. Restore the
+display and restart the unit to use the controls. Cable detection still logs:
 
 ```
 I ftdi: KKL cable ready at 9600 baud
-I vagscanner: probing 01
-I vagscanner: found 01 (KW1281): ...ident...
-I vagscanner: 0 fault code(s) on 01
+I vagscanner: cable ready; no vehicle communication requested
 ```
 
 If you never see "KKL cable ready", the port isn't acting as USB host (no 5 V
 on the port, or it's the USB-Serial/JTAG port).
+
+The startup regression test runs on the host without a board or ESP-IDF:
+
+```sh
+python3 esp32/tests/run_startup_test.py   # from the repository root
+```
+
+It covers display failure, UI lock failure, normal startup, and cable reconnects.
 
 ## Hardware status
 

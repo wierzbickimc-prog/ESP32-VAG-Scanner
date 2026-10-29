@@ -4,6 +4,7 @@ import SwiftUI
 struct OverviewView: View {
     @EnvironmentObject var model: AppModel
     @State private var showCredits = false
+    @State private var showMoreModules = false
 
     private var subtitle: String {
         if model.car == .unknown && model.scanned && !model.modules.isEmpty {
@@ -14,8 +15,8 @@ struct OverviewView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
-                HeroBanner(car: model.car, height: 380) {
+            VStack(alignment: .leading, spacing: 20) {
+                HeroBanner(car: model.car, height: 240) {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("ESP32 VAG SCANNER")
                             .font(.caption.weight(.semibold))
@@ -42,14 +43,11 @@ struct OverviewView: View {
                     }
                 }
 
-                Group {
-                    if model.modules.isEmpty {
-                        emptyState
-                    } else {
-                        controllers
-                    }
+                controllers
+                    .padding(.horizontal, 28)
+                if model.modules.isEmpty {
+                    emptyState.padding(.horizontal, 28)
                 }
-                .padding(.horizontal, 28)
 
                 Button("Photo credits") { showCredits = true }
                     .buttonStyle(.link)
@@ -60,6 +58,25 @@ struct OverviewView: View {
         }
         .background(Color.appBackground)
         .sheet(isPresented: $showCredits) { CreditsSheet() }
+        .sheet(isPresented: $showMoreModules) {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Text("More modules").font(.title2.weight(.bold))
+                    Spacer()
+                    Button("Done") { showMoreModules = false }
+                }
+                Text("Choose a controller to read its faults directly.").foregroundStyle(Color.textMuted)
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 250))], spacing: 12) {
+                        ForEach(commonAddresses.filter { !landingAddresses.contains($0) }, id: \.self) { address in
+                            moduleButton(address: address, dismissPicker: true)
+                        }
+                    }
+                }
+            }
+            .padding(24)
+            .frame(width: 620, height: 560)
+        }
     }
 
     private var carMenu: some View {
@@ -90,7 +107,7 @@ struct OverviewView: View {
             Image(systemName: "dot.radiowaves.left.and.right")
                 .font(.system(size: 40))
                 .foregroundStyle(Color.accent)
-            Text(model.scanning ? model.scanStatus : "Ignition on, then Scan car")
+            Text(model.scanning ? model.scanStatus : "Ignition on, then choose a module or Scan car")
                 .font(.title3.weight(.semibold))
             Text("No car handy? Try a demo car: simulated fault codes and live measuring blocks.")
                 .foregroundStyle(Color.textMuted)
@@ -104,20 +121,40 @@ struct OverviewView: View {
             .padding(.top, 4)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 48)
+        .padding(.vertical, 24)
         .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Color.surface))
+    }
+
+    private func moduleButton(address: Int, dismissPicker: Bool = false) -> some View {
+        let module = model.modules.first { $0.address == address }
+            ?? Module(address: address, ident: "", protocolVersion: 0)
+        return Button {
+            if dismissPicker { showMoreModules = false }
+            model.openModule(address: address)
+        } label: {
+            ModuleCard(module: module)
+        }
+        .buttonStyle(.plain)
+        .disabled(model.busy || model.port.isEmpty)
     }
 
     private var controllers: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("CONTROLLERS")
-                .font(.caption.weight(.semibold))
-                .tracking(3)
-                .foregroundStyle(Color.textMuted)
+            HStack {
+                Text("OPEN A MODULE")
+                    .font(.caption.weight(.semibold))
+                    .tracking(3)
+                    .foregroundStyle(Color.textMuted)
+                Spacer()
+                Button("More modules…") { showMoreModules = true }
+                    .disabled(model.busy)
+            }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 14)], spacing: 14) {
-                ForEach(model.modules) { module in
-                    ModuleCard(module: module)
-                        .onTapGesture { if module.supported { model.selection = module } }
+                ForEach(landingAddresses, id: \.self) { address in
+                    moduleButton(address: address)
+                }
+                ForEach(model.modules.filter { !landingAddresses.contains($0.address) }) { module in
+                    moduleButton(address: module.address)
                 }
             }
         }
@@ -134,7 +171,7 @@ struct ModuleCard: View {
             AddressBadge(address: module.hexAddress)
             VStack(alignment: .leading, spacing: 4) {
                 Text(module.name).font(.title3.weight(.semibold)).foregroundStyle(Color.textPrimary)
-                Text(module.supported ? (module.identLines.first ?? "") : "KWP\(module.protocolVersion)")
+                Text(module.protocolVersion == 0 ? "Tap to connect and read faults" : (module.supported ? (module.identLines.first ?? "") : "KWP\(module.protocolVersion)"))
                     .font(.callout)
                     .foregroundStyle(Color.textMuted)
                     .lineLimit(1)
@@ -151,6 +188,8 @@ struct ModuleCard: View {
     @ViewBuilder private var status: some View {
         if !module.supported {
             Text("Not supported").font(.callout).foregroundStyle(Color.textMuted)
+        } else if let error = model.moduleErrors[module.address] {
+            Text(error).font(.callout).foregroundStyle(Color.warn).lineLimit(2)
         } else if let count = model.faults[module.address]?.count {
             if count == 0 {
                 Label("No faults", systemImage: "checkmark.circle.fill").foregroundStyle(Color.ok)
@@ -159,7 +198,7 @@ struct ModuleCard: View {
                     .foregroundStyle(Color.fault)
             }
         } else {
-            Text("Open to read faults").font(.callout).foregroundStyle(Color.textMuted)
+            Text("Not checked").font(.callout).foregroundStyle(Color.textMuted)
         }
     }
 }

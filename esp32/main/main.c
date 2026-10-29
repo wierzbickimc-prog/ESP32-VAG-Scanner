@@ -29,49 +29,11 @@ static void load_fault_table(void)
 #endif
 }
 
-/*
- * Headless mode (no display driver yet): once the cable attaches, scan, then
- * read the engine's fault codes, logging everything to the serial monitor.
- */
+/* A missing display must never initiate vehicle communication. */
 static void headless_event(const kl_event_t *ev)
 {
-    switch (ev->type) {
-    case KL_EV_CABLE:
-        ESP_LOGI(TAG, "cable %s", ev->ok ? "ready" : "gone");
-        if (ev->ok) {
-            kl_request_t scan = { .op = KL_SCAN };
-            kline_submit(&scan);
-        }
-        break;
-    case KL_EV_PROGRESS:
-        ESP_LOGI(TAG, "probing %02X", ev->address);
-        break;
-    case KL_EV_MODULE:
-        ESP_LOGI(TAG, "found %02X (KW%d):\n%s", ev->address, ev->protocol, ev->ident);
-        break;
-    case KL_EV_DONE:
-        if (ev->op == KL_SCAN) {
-            ESP_LOGI(TAG, "scan done; reading engine faults");
-            kl_request_t faults = { .op = KL_FAULTS, .address = 0x01 };
-            kline_submit(&faults);
-        }
-        break;
-    case KL_EV_FAULTS:
-        if (!ev->ok) {
-            ESP_LOGW(TAG, "faults %02X: %s", ev->address, kw_strerror(ev->err));
-            break;
-        }
-        ESP_LOGI(TAG, "%d fault code(s) on %02X", ev->count, ev->address);
-        for (int i = 0; i < ev->count; i++) {
-            char line[24];
-            const char *desc = kw_fault_describe(ev->faults[i].dtc);
-            kw_format_fault(&ev->faults[i], line, sizeof(line));
-            ESP_LOGI(TAG, "  %s  %s", line, desc ? desc : "");
-        }
-        break;
-    case KL_EV_GROUP:
-        break;
-    }
+    if (ev->type == KL_EV_CABLE)
+        ESP_LOGI(TAG, "cable %s; no vehicle communication requested", ev->ok ? "ready" : "gone");
 }
 
 void app_main(void)
@@ -84,14 +46,13 @@ void app_main(void)
     load_fault_table();
     ESP_LOGI(TAG, "measuring-block labels: %d", kw_labels_load(labels_csv_start, labels_csv_end - labels_csv_start - 1));
 
-    if (board_display_init()) {
-        if (board_lvgl_lock()) {
-            gui_build();
-            board_lvgl_unlock();
-        }
+    if (board_display_init() && board_lvgl_lock()) {
+        gui_build();
+        board_lvgl_unlock();
         kline_start(gui_on_kline_event);
         debug_console_start();
     } else {
+        ESP_LOGW(TAG, "Display unavailable; vehicle communication disabled until the UI is restored");
         kline_start(headless_event);
     }
 }

@@ -10,7 +10,9 @@ enum KLineError: LocalizedError {
         switch self {
         case .noPort: return "No cable selected."
         case .open(let port): return "Could not open \(port)."
-        case .protocolError(let code): return String(cString: kw_strerror(code)).capitalizedFirst
+        case .protocolError(let code):
+            if code == KW_ENOWAKE { return "No response. Check the ignition and module address, then retry." }
+            return String(cString: kw_strerror(code)).capitalizedFirst
         }
     }
 }
@@ -78,6 +80,28 @@ final class KLine: @unchecked Sendable {
                 }
             }
             return found
+        }
+    }
+
+    /// Identification and faults use one wake-up, with no discovery scan.
+    func openModule(port: String, baud: Int, address: Int) async throws
+        -> (module: Module, faults: [FaultCode]?, error: String?) {
+        try await run {
+            try self.ensureOpen(port: port, baud: baud)
+            self.demoPause(0.6)
+            let rc = kw_connect(self.session, self.io, UInt8(address))
+            guard rc == KW_OK || rc == KW_EKWP2000 else { throw KLineError.protocolError(rc) }
+            let module = self.currentModule()
+            guard rc == KW_OK else {
+                return (module, nil, "KWP\(module.protocolVersion) is not supported.")
+            }
+            defer { kw_end(self.session) }
+            var codes = [KWCore.FaultCode](repeating: KWCore.FaultCode(), count: 64)
+            let n = kw_read_fault_codes(self.session, &codes, 64)
+            guard n >= 0 else {
+                return (module, nil, KLineError.protocolError(n).localizedDescription)
+            }
+            return (module, codes.prefix(Int(n)).map(FaultCode.init), nil)
         }
     }
 

@@ -24,7 +24,9 @@ struct ESP32VAGScannerApp: App {
 @MainActor
 final class AppModel: ObservableObject {
     @Published var ports: [String] = []
-    @Published var port = ""
+    @Published var port = "" {
+        didSet { if port != oldValue { resetConnectionResults() } }
+    }
     @Published var baud = 9600
     @Published var modules: [Module] = []
     @Published var selection: Module?
@@ -35,6 +37,8 @@ final class AppModel: ObservableObject {
     @Published var error: String?
     /// Fault codes read so far this scan, by controller address.
     @Published var faults: [Int: [FaultCode]] = [:]
+    @Published var moduleStatus: [Int: String] = [:]
+    @Published var moduleErrors: [Int: String] = [:]
     @Published private(set) var car: Car
 
     let kline = KLine()
@@ -61,6 +65,7 @@ final class AppModel: ObservableObject {
     var totalFaults: Int { faults.values.reduce(0) { $0 + $1.count } }
 
     func startDemo(_ port: String) {
+        guard !busy else { return }
         self.port = port
         scan(all: false)
     }
@@ -80,7 +85,55 @@ final class AppModel: ObservableObject {
         UserDefaults.standard.set(car.rawValue, forKey: "car")
     }
 
+    func openModule(address: Int) {
+        guard !busy else { return }
+        selection = modules.first { $0.address == address }
+            ?? Module(address: address, ident: "", protocolVersion: 0)
+        faults[address] = nil
+        moduleErrors[address] = nil
+        moduleStatus[address] = "Connecting and reading faults…"
+        busy = true
+        let selectedPort = port
+        let selectedBaud = baud
+        Task {
+            defer { busy = false }
+            do {
+                let result = try await kline.openModule(port: selectedPort, baud: selectedBaud, address: address)
+                if let index = modules.firstIndex(where: { $0.address == address }) {
+                    modules[index] = result.module
+                } else {
+                    modules.append(result.module)
+                    modules.sort { $0.address < $1.address }
+                }
+                if selection?.address == address { selection = result.module }
+                faults[address] = result.faults
+                moduleErrors[address] = result.error
+                moduleStatus[address] = result.error ?? "Read \(Date.now.formatted(date: .omitted, time: .shortened))"
+                if !carChosenByHand {
+                    let identified = Car.identify(modules)
+                    if identified != .unknown { setCar(identified) }
+                }
+            } catch {
+                moduleErrors[address] = error.localizedDescription
+                moduleStatus[address] = error.localizedDescription
+            }
+        }
+    }
+
+    func resetConnectionResults() {
+        modules = []
+        selection = nil
+        faults = [:]
+        moduleStatus = [:]
+        moduleErrors = [:]
+        scanStatus = ""
+        error = nil
+        scanned = false
+        carChosenByHand = false
+    }
+
     func scan(all: Bool) {
+        guard !busy else { return }
         let stop = StopFlag()
         scanStop = stop
         scanning = true
@@ -89,6 +142,8 @@ final class AppModel: ObservableObject {
         modules = []
         selection = nil
         faults = [:]
+        moduleStatus = [:]
+        moduleErrors = [:]
         carChosenByHand = false
         let addresses = all ? Array(1...0x7F) : commonAddresses
         Task {
@@ -163,8 +218,11 @@ struct Sidebar: View {
             if !model.modules.isEmpty {
                 Section("Controllers") {
                     ForEach(model.modules) { module in
-                        NavigationLink(value: module) { SidebarRow(module: module) }
-                            .disabled(!module.supported)
+                        Button { model.openModule(address: module.address) } label: {
+                            SidebarRow(module: module)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(model.busy)
                     }
                 }
             }
@@ -213,8 +271,10 @@ struct ConnectionPanel: View {
                     ForEach(model.ports, id: \.self) { Text(KLine.displayName($0)).tag($0) }
                 }
                 .labelsHidden()
+                .disabled(model.busy)
                 Button { model.refreshPorts() } label: { Image(systemName: "arrow.clockwise") }
                     .help("Look for USB cables again")
+                    .disabled(model.busy)
             }
             Picker("Baud", selection: $model.baud) {
                 Text("9600").tag(9600)
@@ -223,6 +283,7 @@ struct ConnectionPanel: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
+            .disabled(model.busy)
 
             if model.scanning {
                 Button(role: .cancel) { model.stopScan() } label: {
