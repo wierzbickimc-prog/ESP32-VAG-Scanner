@@ -24,6 +24,13 @@ const char *kw_fault_describe(int dtc);
 int kw_fault_pcode(int dtc, char *out, int out_len);
 
 /*
+ * Ross-Tech wiki page for `dtc`. Short codes are named by the zero-padded code
+ * (".../00532"); OBD codes by code, P-code and the P-code's digits read as hex
+ * (".../17524/P1116/004374"). Not every code has a page.
+ */
+void kw_fault_wiki_url(int dtc, char *out, int out_len);
+
+/*
  * Fault type for a KW1281 status byte (bits 0-6; bit 7 is the intermittent
  * flag and is ignored), e.g. 0x9D -> "Short to Ground". Compiled in from
  * fault_types.h if assets/tools/fetch_fault_types.py has been run. Returns NULL

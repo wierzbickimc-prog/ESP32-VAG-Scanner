@@ -164,6 +164,19 @@ const char *kw_sensor_kind(int sensor_id)
     case 56: case 57: return "Workshop code";
     case 68: return "Yaw rate";
     case 70: return "Acceleration";
+    case 0x80: return "Engine speed";
+    case 0x81: return "Percentage";
+    case 0x82: return "Current";
+    case 0x83: case 0x8F: return "Ignition timing";
+    case 0x84: return "Throttle angle";
+    case 0x85: case 0x8A: return "Voltage";
+    case 0x86: return "Speed";
+    case 0x88: return "Switch positions";
+    case 0x89: return "Injection time";
+    case 0x8D: case 0x8E: return "Text";
+    case 0x90: return "Fuel consumption";
+    case 0x92: return "Lambda";
+    case 0x95: return "Temperature";
     default: return "Value";
     }
 }

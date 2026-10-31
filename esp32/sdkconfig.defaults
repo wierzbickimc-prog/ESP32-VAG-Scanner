@@ -2,6 +2,8 @@ CONFIG_IDF_TARGET="esp32p4"
 # 1 ms ticks so K-line delays aren't rounded to 10 ms.
 CONFIG_FREERTOS_HZ=1000
 CONFIG_LV_FONT_MONTSERRAT_20=y
+# QR codes link fault codes to the Ross-Tech wiki (the P4 has no browser).
+CONFIG_LV_USE_QRCODE=y
 CONFIG_LV_FONT_MONTSERRAT_28=y
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_SPEED_200M=y

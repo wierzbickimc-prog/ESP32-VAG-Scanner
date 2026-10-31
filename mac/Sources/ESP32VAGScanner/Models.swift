@@ -34,9 +34,11 @@ struct FaultCode: Identifiable, Hashable {
     var statusText: String { String(format: "%02d-%02d", status & 0x7F, (status >> 7) * 10) }
     var intermittent: Bool { status & 0x80 != 0 }
 
-    /// Ross-Tech documents ~1,000 of the 5-digit VAG codes; the page name is the zero-padded code.
+    /// The Ross-Tech wiki page (kwcore builds the name: "00532", "17524/P1116/004374").
     var wikiURL: URL {
-        URL(string: String(format: "https://wiki.ross-tech.com/wiki/index.php/%05d", dtc))!
+        var buf = [CChar](repeating: 0, count: 96)
+        kw_fault_wiki_url(Int32(dtc), &buf, 96)
+        return URL(string: String(cString: buf))!
     }
 
     init(_ raw: KWCore.FaultCode) {

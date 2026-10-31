@@ -1096,10 +1096,10 @@ static void dash_refresh_tile(int i)
         if (instant > 0) {
             label_printf(t->value, "%.1f", dash_economy(instant));
             lv_label_set_text(t->unit, s_imperial ? "mpg" : "l/100km");
-        } else if (s_fuel.have_maf) {
-            double flow = kw_unit_convert(s_fuel.flow_lph, "l/h", s_imperial, &unit);
-            label_printf(t->value, "%.2f", flow);
-            label_printf(t->unit, "%s  idle", unit);
+        } else if (s_fuel.have_maf && s_fuel.have_speed) {
+            /* standing still: no distance, so 0 mpg (l/100km has no finite value) */
+            lv_label_set_text(t->value, s_imperial ? "0.0" : "--");
+            lv_label_set_text(t->unit, s_imperial ? "mpg  stopped" : "l/100km  stopped");
         } else {
             lv_label_set_text(t->value, "--");
             lv_label_set_text(t->unit, s_imperial ? "mpg" : "l/100km");
@@ -1485,6 +1485,30 @@ static void on_fault_card(lv_event_t *e)
     lv_obj_set_width(mbox, 720);
     lv_msgbox_add_title(mbox, title);
     lv_msgbox_add_text(mbox, body);
+
+    /* the P4 has no browser: a QR code opens the Ross-Tech page on a phone */
+    char url[96];
+    kw_fault_wiki_url(dtc, url, sizeof(url));
+    lv_obj_t *link = lv_obj_create(lv_msgbox_get_content(mbox));
+    lv_obj_remove_style_all(link);
+    lv_obj_set_size(link, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(link, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(link, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(link, 20, 0);
+    lv_obj_set_style_pad_top(link, 16, 0);
+    lv_obj_t *qr = lv_qrcode_create(link);
+    lv_qrcode_set_size(qr, 200);
+    lv_qrcode_set_dark_color(qr, lv_color_black());
+    lv_qrcode_set_light_color(qr, lv_color_white());
+    lv_qrcode_update(qr, url, strlen(url));
+    lv_obj_set_style_border_color(qr, lv_color_white(), 0);
+    lv_obj_set_style_border_width(qr, 10, 0);
+    lv_obj_t *hint = lv_label_create(link);
+    lv_label_set_text(hint, "Scan with your phone for this code's Ross-Tech wiki page. "
+                            "Not every code has one.");
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_flex_grow(hint, 1);
+
     lv_obj_t *ok = lv_msgbox_add_footer_button(mbox, "Done");
     lv_obj_add_event_cb(ok, on_fault_close, LV_EVENT_CLICKED, mbox);
 }

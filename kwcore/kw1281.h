@@ -25,10 +25,12 @@ extern "C" {
  *   set_baud    optional (may be NULL): changes the line speed, returns 0 on success.
  *   baud        the current line speed; the backend sets it when it opens.
  *
- * Controllers answer the wake-up at their own speed (9600 or 10400). A sync
- * byte other than $55 means the speeds differ: with set_baud, the core then
- * switches between 9600 and 10400 and wakes the controller again. The new
- * speed stays for later connections.
+ * Controllers answer the wake-up at their own speed (10400 for an ME7
+ * engine, 1200 for an 01P transmission, 9600 for most). A sync byte other
+ * than $55 means the speeds differ: with set_baud, the core works out the
+ * controller's speed from the garbled byte, switches, and wakes it again.
+ * addr_baud remembers each controller's speed so later wake-ups (the
+ * dashboard alternates controllers) switch first. Zero it when opening.
  */
 typedef struct KwIo {
     int (*read_byte)(void *ctx, int timeout_ms);
@@ -40,6 +42,7 @@ typedef struct KwIo {
     void (*sleep_us)(void *ctx, uint32_t us);
     int (*set_baud)(void *ctx, int baud);
     int baud;
+    uint16_t addr_baud[128];
     void *ctx;
 } KwIo;
 
@@ -62,6 +65,23 @@ typedef struct KwBlock {
     uint8_t body[253];
 } KwBlock;
 
+/*
+ * Some controllers (e.g. the 01P transmission) answer a group read with a
+ * header block (title $02: formula, scaling byte and an optional lookup
+ * table per value) and then, on every further read, a short body block
+ * ($F4) holding just the changing byte of each value. kw_group_read keeps
+ * the header here and returns ordinary SensorValues either way.
+ */
+#define KW_HEADER_VALUES 4
+typedef struct KwGroupHeader {
+    int group;
+    int count;                         /* 0 = no header held */
+    uint8_t formula[KW_HEADER_VALUES];
+    uint8_t a[KW_HEADER_VALUES];
+    uint8_t table_len[KW_HEADER_VALUES];
+    uint8_t table[KW_HEADER_VALUES][17];
+} KwGroupHeader;
+
 typedef struct KwSession {
     KwIo *io;
     uint8_t address;
@@ -72,6 +92,7 @@ typedef struct KwSession {
     int have_counter;      /* 0 until the first block is received */
     int connected;
     char ident[KW_IDENT_MAX];
+    KwGroupHeader header;
 } KwSession;
 
 typedef struct FaultCode {

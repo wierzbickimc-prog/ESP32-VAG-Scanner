@@ -21,15 +21,11 @@ part,group,field,label
 1H0907379D,2,2,Supply voltage
 1H0907379D,2,3,Return flow pump
 1H0907379D,2,4,ABS warning lamp
-# demo automatic transmission (EuroVan). On a real car, find the ATF
-# temperature field in 02 > Live data; Ross-Tech says group 5, sometimes 2 or 4.
-7D0927156,4,1,Selector lever position
-7D0927156,4,2,Gear engaged
-7D0927156,4,3,Supply voltage
-7D0927156,4,4,Vehicle speed
-7D0927156,5,1,ATF temperature
-7D0927156,5,2,Engine speed
-7D0927156,5,3,Torque converter lock-up
+# 01P automatic transmission (EuroVan), 1200 baud, header+body groups. Only
+# fields checked on the real van (2026-10-31) are named; others show their kind.
+01P927733,1,1,Selector lever position
+01P927733,2,3,Supply voltage
+01P927733,5,1,ATF temperature
 # demo Climatronic
 7D0907040H,1,1,Outside temperature
 7D0907040H,1,2,Cabin temperature

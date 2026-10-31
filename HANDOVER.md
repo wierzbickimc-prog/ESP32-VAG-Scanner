@@ -1,5 +1,24 @@
 # Handover: ESP32 VAG Scanner (macOS + ESP32-P4)
 
+## EuroVan transmission: 1200 baud, header+body groups (2026-10-31)
+
+- **02 is 01P927733CG "AG4 Getriebe 01P"**, KW1281 at **1200 baud**, no faults stored. At 9600
+  its sync reads `80`, at 10400 `00`. The core now predicts the garbled byte for each speed
+  (`heard_as`, a UART sampling model that also reproduces the engine's `B5`) and switches straight
+  to the matching one; `KwIo.addr_baud` remembers each controller's speed so the dashboard's
+  engine/transmission alternation switches before waking. Verified on the van from 9600.
+- **Its groups are header+body:** the first read of a group returns title `$02` (per value:
+  formula, NWb, table length, table), later reads `$F4` with one MWb per value. Group reads now
+  follow upstream: one request, one reply, **no ACK** in between. An ACK exchange (keep-alive)
+  makes the module resend the header, which is also how to switch groups (the core does it).
+  The engine works with the new pattern too. Formulas `$80-$95` added (scalings per
+  KLineKWP1281Lib); `$8B`/`$8C` use the header's 17-point table.
+- Real data: group 5 field 1 = **ATF temperature** (70-73 °C, formula `$8C`), group 1 field 1 =
+  selector lever ("P"), group 2 field 3 = supply voltage (11.5 V). The ATF preset is confirmed.
+- Ross-Tech wiki: OBD codes live at `17524/P1116/004374` (third part = P-code digits as hex).
+  `kw_fault_wiki_url` builds both forms; the P4 shows it as a QR code (no browser on the P4).
+- Fuel economy never shows gal/h: standing still reads 0.0 mpg ("stopped").
+
 ## First real car: EuroVan engine at 10400 baud (2026-10-31)
 
 - The van's engine ECU is **022906032AF MOTRONIC ME7.1** (coding G 0003). It answers the

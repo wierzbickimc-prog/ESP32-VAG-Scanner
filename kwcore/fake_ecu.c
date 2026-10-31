@@ -200,22 +200,6 @@ static int group_values(FakeEcu *f, int g, uint8_t *out)
             return -1;
         }
         break;
-    case KIND_TRANS: {
-        Drive d = drive_state(f);
-        if (g == 4) {        /* gear selector, gear, battery, vehicle speed */
-            SV(17, 'D', ' ');
-            SV(8, 10, d.speed > 0 ? 1 + d.speed / 30 : 1);
-            SV(6, 100, wobble(f, 138, 1));
-            SV(7, 100, d.speed);
-        } else if (g == 5) { /* ATF temperature, rpm, ... */
-            SV(5, 10, d.atf_b);
-            SV(1, 200, d.rpm_b);
-            SV(2, 250, d.speed > 0 ? 200 : 0);
-        } else {
-            return -1;
-        }
-        break;
-    }
     case KIND_HVAC:
         if (g == 1) {        /* outside, cabin, blower volts, coolant */
             SV(5, 10, wobble(f, 112, 0));
@@ -255,6 +239,51 @@ static int group_values(FakeEcu *f, int g, uint8_t *out)
     return (int)(p - out);
 }
 
+/*
+ * The EuroVan's 01P transmission is a header+body controller, like the real
+ * one: the first read of a group gets a $02 header (formula, scaling, table
+ * per value), later reads a $F4 block with one byte per value. A keep-alive
+ * (ACK) makes it send the header again. Group 5 field 1 is ATF temperature
+ * through a lookup table (formula $8C), as on the real van.
+ */
+static void trans_group(FakeEcu *f, int g)
+{
+    uint8_t hdr[64], body[4];
+    int hn = 0, bn = 0;
+    Drive d = drive_state(f);
+#define HV(formula, a, b) (hdr[hn++] = (formula), hdr[hn++] = (uint8_t)(a), hdr[hn++] = 0, body[bn++] = (uint8_t)(b))
+    if (g == 1) {        /* selector lever, solenoid voltage, load, switches */
+        HV(0x8E, 1, d.speed > 0 ? 'D' : 'P');
+        HV(0x85, 5, d.speed > 0 ? 120 : 0);
+        HV(0x81, 100, d.speed > 0 ? 150 : 0);
+        HV(0x88, 0xFF, 0x07);
+    } else if (g == 2) { /* currents, supply voltage, sensor voltage */
+        HV(0x82, 11, 1);
+        HV(0x82, 10, 0);
+        HV(0x85, 16, wobble(f, 184, 1));
+        HV(0x85, 5, 127);
+    } else if (g == 5) { /* ATF temperature (table: deg C = b - 40), switches, rpm */
+        hdr[hn++] = 0x8C;
+        hdr[hn++] = 40;
+        hdr[hn++] = 17;
+        for (int i = 0; i <= 16; i++)
+            hdr[hn++] = (uint8_t)(i * 16 > 255 ? 255 : i * 16);
+        body[bn++] = (uint8_t)(d.atf_b - 100 + 40);
+        HV(0x88, 0xFE, 0xB6);
+        HV(0x80, 30, d.rpm_b * 40 / 30);
+    } else {
+        queue_block(f, 0x0A, NULL, 0);
+        return;
+    }
+#undef HV
+    if (f->header_group != g) {
+        f->header_group = g;
+        queue_block(f, 0x02, hdr, hn);
+    } else {
+        queue_block(f, 0xF4, body, bn);
+    }
+}
+
 static void handle_request(FakeEcu *f)
 {
     uint8_t title = f->in[2];
@@ -262,8 +291,14 @@ static void handle_request(FakeEcu *f)
     const uint8_t *body = f->in + 3;
     FakeModule *m = f->active;
 
+    /* a new request replaces anything we still had queued */
+    if (title != 0x09)
+        f->out_count = 0;
+
     switch (title) {
-    case 0x09: /* ACK: continue our queue, or ack back */
+    case 0x09: /* ACK: continue our queue, or ack back (a keep-alive) */
+        if (f->out_count == 0)
+            f->header_group = -1;
         send_next(f);
         return;
     case 0x00: /* ReadIdent */
@@ -297,17 +332,19 @@ static void handle_request(FakeEcu *f)
         queue_block(f, 0x09, NULL, 0);
         break;
     }
-    case 0x29: { /* group read */
+    case 0x29: { /* group read: one reply block, the tester's next request takes the turn */
         uint8_t values[32];
-        int n = body_len == 1 ? group_values(f, body[0], values) : -1;
         if (body_len != 1)
             fail(f, "group read body length");
-        if (n < 0) {
-            queue_block(f, 0x0A, NULL, 0);
-        } else {
-            queue_block(f, 0xE7, values, n);
-            queue_block(f, 0x09, NULL, 0);
+        if (m->kind == KIND_TRANS) {
+            trans_group(f, body[0]);
+            break;
         }
+        int n = body_len == 1 ? group_values(f, body[0], values) : -1;
+        if (n < 0)
+            queue_block(f, 0x0A, NULL, 0);
+        else
+            queue_block(f, 0xE7, values, n);
         break;
     }
     case 0x06:
@@ -464,15 +501,22 @@ static void f_flush(void *ctx)
         if (m->address != addr)
             continue;
         if (m->baud && m->baud != f->baud) {
-            /* $55 01 8A sent at 10400, read at 9600 (as seen on a real ME7) */
-            rx_push(f, 0xB5);
-            rx_push(f, 0x80);
+            /* the $55 sync as a UART at the wrong speed hears it */
+            int v = 0;
+            for (int bit = 0; bit < 8; bit++) {
+                double t = (1.5 + bit) / f->baud;      /* sample time */
+                int sent_bit = (int)(t * m->baud + 1e-9);
+                int level = sent_bit == 0 ? 0 : sent_bit <= 8 ? (0x55 >> (sent_bit - 1)) & 1 : 1;
+                v |= level << bit;
+            }
+            rx_push(f, (uint8_t)v);
             return;
         }
         f->active = m;
         f->wakes++;
         f->state = WAIT_KEYWORD_ACK;
         f->have_counter = 0;
+        f->header_group = -1;
         f->in_len = 0;
         f->sending = 0;
         f->out_count = 0;
@@ -537,7 +581,7 @@ static void setup_eurovan(FakeEcu *f)
     };
     f->modules[4] = (FakeModule){
         .address = 0x02, .keyword = 1281, .kind = KIND_TRANS,
-        .ident = { "7D0927156   AG4 Getriebe 01P 0001", NULL, NULL },
+        .ident = { "01P927733CG AG4 Getriebe 01P    4893", NULL, NULL }, .baud = 1200,
     };
     f->modules[1] = (FakeModule){
         .address = 0x03, .keyword = 1281, .kind = KIND_ABS,
@@ -608,6 +652,7 @@ void fake_ecu_init_car(FakeEcu *f, KwIo *io, FakeCar car)
     io->sleep_us = f_sleep;
     io->set_baud = f_set_baud;
     io->baud = 9600;
+    memset(io->addr_baud, 0, sizeof(io->addr_baud));
     f->baud = 9600;
     io->ctx = f;
 }

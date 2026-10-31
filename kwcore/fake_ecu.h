@@ -63,6 +63,7 @@ typedef struct FakeEcu {
     uint8_t counter;
     int have_counter;
     int extra_pending;
+    int header_group;         /* header+body controllers: group whose header was sent */
     unsigned tick;
     unsigned drive;           /* drive-cycle step (live mode) */
 } FakeEcu;

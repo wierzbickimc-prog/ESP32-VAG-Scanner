@@ -191,9 +191,9 @@ private struct DashTile: View {
         return VStack(alignment: .leading, spacing: 8) {
             if instant > 0 {
                 BigValue(value: String(format: "%.1f", dash.economy(instant)), unit: dash.economyUnit)
-            } else if dash.fuel.have_maf != 0 {
-                let flow = dash.display(dash.fuel.flow_lph, unit: "l/h")
-                BigValue(value: String(format: "%.2f", flow.value), unit: "\(flow.unit) · idle")
+            } else if dash.fuel.have_maf != 0 && dash.fuel.have_speed != 0 {
+                // standing still: no distance, so 0 mpg (l/100km has no finite value)
+                BigValue(value: dash.imperial ? "0.0" : "––", unit: "\(dash.economyUnit) · stopped")
             } else {
                 BigValue(value: "––", unit: dash.economyUnit)
             }

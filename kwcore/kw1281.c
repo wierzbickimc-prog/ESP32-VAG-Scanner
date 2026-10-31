@@ -19,6 +19,8 @@
 #define TITLE_GROUP_READ   0x29
 #define TITLE_GROUP_RESP   0xE7
 #define TITLE_ASCII        0xF6
+#define TITLE_GROUP_HEADER 0x02
+#define TITLE_GROUP_BODY   0xF4
 #define TITLE_FAULT_RESP   0xFC
 
 #define SYNC_TIMEOUT_MS 2000
@@ -101,37 +103,84 @@ static int wakeup_once(KwSession *s, int even_parity)
     return KW_OK;
 }
 
+/* Speeds KW1281 controllers use, most common first. */
+static const int BAUDS[] = { 9600, 10400, 4800, 2400, 1200 };
+#define BAUD_COUNT (int)(sizeof(BAUDS) / sizeof(BAUDS[0]))
+
 /*
- * A byte other than $55 after the address means the controller answered at
- * another speed (an ME7 at 10400 read at 9600 gives $B5). Switch once and
- * try again; that retry doesn't count against `attempts`.
+ * The byte a UART at `read` baud makes of a $55 sent at `sent` baud: it
+ * starts on the falling edge of the start bit and samples mid-bit. A 10400
+ * controller read at 9600 gives $B5 and a 1200 one gives $80, as seen on the
+ * EuroVan's engine and transmission.
  */
-static int switch_baud(KwSession *s)
+static int heard_as(int sent, int read)
+{
+    int v = 0;
+    for (int i = 0; i < 8; i++) {
+        /* integer maths: which sent bit is on the line at sample i */
+        int bit = (int)((long)(3 + 2 * i) * sent / (2L * read));
+        int level = bit == 0 ? 0 : bit <= 8 ? (0x55 >> (bit - 1)) & 1 : 1;
+        v |= level << i;
+    }
+    return v;
+}
+
+static int set_baud(KwIo *io, int baud)
+{
+    if (!io->set_baud || baud == io->baud)
+        return baud == io->baud;
+    if (io->set_baud(io->ctx, baud) != 0)
+        return 0;
+    io->baud = baud;
+    return 1;
+}
+
+/*
+ * After a sync byte other than $55: switch to the speed that explains it, or
+ * failing that the next one not yet tried. Returns 1 if the speed changed.
+ */
+static int switch_baud(KwSession *s, int *tried)
 {
     KwIo *io = s->io;
     if (s->sync_byte < 0 || !io->set_baud || !io->baud)
         return 0;
-    int next = io->baud == 10400 ? 9600 : 10400;
-    if (io->set_baud(io->ctx, next) != 0)
+    for (int i = 0; i < BAUD_COUNT; i++)
+        if (BAUDS[i] == io->baud)
+            *tried |= 1 << i;
+    int pick = -1;
+    for (int i = 0; i < BAUD_COUNT && pick < 0; i++)
+        if (!(*tried & (1 << i)) && heard_as(BAUDS[i], io->baud) == s->sync_byte)
+            pick = i;
+    for (int i = 0; i < BAUD_COUNT && pick < 0; i++)
+        if (!(*tried & (1 << i)))
+            pick = i;
+    if (pick < 0)
         return 0;
-    io->baud = next;
-    return 1;
+    *tried |= 1 << pick;
+    return set_baud(io, BAUDS[pick]);
 }
 
+/* Speed switches don't count against `attempts`. */
 static int wakeup(KwSession *s, int attempts)
 {
+    KwIo *io = s->io;
     int err = KW_ENOWAKE;
-    int switched = 0;
-    for (int attempt = 0; attempt < attempts + switched; attempt++) {
+    int switches = 0, tried = 0;
+    uint16_t known = io->addr_baud[s->address & 0x7F];
+
+    if (known)
+        set_baud(io, known);
+    for (int attempt = 0; attempt < attempts + switches; attempt++) {
         if (attempt > 0)
-            sleep_ms(s->io, 1000);
+            sleep_ms(io, 1000);
         err = wakeup_once(s, 0);
         if (err == KW_OK || err == KW_EKWP2000) {
-            s->baud = s->io->baud;
+            s->baud = io->baud;
+            io->addr_baud[s->address & 0x7F] = (uint16_t)io->baud;
             return err;
         }
-        if (!switched)
-            switched = switch_baud(s);
+        if (switches < BAUD_COUNT - 1 && switch_baud(s, &tried))
+            switches++;
     }
     return err;
 }
@@ -290,6 +339,25 @@ static int request(KwSession *s, uint8_t title, const uint8_t *body, int body_le
     return n;
 }
 
+/*
+ * Group reads, as upstream does them: one request, one reply block, and no
+ * ACK in between. The next request takes the turn. An ACK exchange counts as
+ * a keep-alive, after which header+body controllers resend their header.
+ * Returns 1 with the reply in *blk (a lone ACK means an empty group: 0),
+ * or an error.
+ */
+static int request_one(KwSession *s, uint8_t title, const uint8_t *body, int body_len, KwBlock *blk)
+{
+    int err = send_block(s, title, body, body_len);
+    if (err != KW_OK)
+        return err;
+    if ((err = receive_block(s, blk)) != KW_OK)
+        return err;
+    if (blk->title == TITLE_NAK)
+        return KW_ENAK;
+    return blk->title == TITLE_ACK ? 0 : 1;
+}
+
 static void append_ident(KwSession *s, const KwBlock *blocks, int n, int *more)
 {
     size_t pos = strlen(s->ident);
@@ -372,6 +440,7 @@ int kw_keep_alive(KwSession *s)
 {
     KwBlock blocks[KW_MAX_BLOCKS];
     int n = request(s, TITLE_ACK, NULL, 0, blocks, KW_MAX_BLOCKS);
+    s->header.count = 0; /* header+body controllers resend the header after this */
     return n < 0 ? n : KW_OK;
 }
 
@@ -415,29 +484,95 @@ int kw_clear_fault_codes(KwSession *s, FaultCode *remaining, int max_codes)
     return collect_faults(blocks, n, remaining, max_codes);
 }
 
+/* Stores a header block's formulas. Returns the value count or KW_EPROTO. */
+static int parse_group_header(KwSession *s, int group, const KwBlock *b)
+{
+    KwGroupHeader *h = &s->header;
+    memset(h, 0, sizeof(*h));
+    int i = 0;
+    while (i + 3 <= b->body_len) {
+        int len = b->body[i + 2];
+        if (h->count >= KW_HEADER_VALUES || i + 3 + len > b->body_len)
+            return KW_EPROTO;
+        h->formula[h->count] = b->body[i];
+        h->a[h->count] = b->body[i + 1];
+        h->table_len[h->count] = (uint8_t)(len <= 17 ? len : 0);
+        if (len <= 17)
+            memcpy(h->table[h->count], b->body + i + 3, len);
+        h->count++;
+        i += 3 + len;
+    }
+    if (i != b->body_len)
+        return KW_EPROTO;
+    h->group = group;
+    return h->count;
+}
+
+/*
+ * Formulas $8B (rpm) and $8C (temperature) look the body byte up in a
+ * 17-point table from the header. The result becomes an ordinary formula 1
+ * or 5 value so everything downstream treats it the same way.
+ */
+static SensorValue header_value(const KwGroupHeader *h, int i, int b)
+{
+    SensorValue v = { h->formula[i], h->a[i], b };
+    if ((h->formula[i] == 0x8B || h->formula[i] == 0x8C) && h->table_len[i] == 17) {
+        int idx = b / 16 > 15 ? 15 : b / 16;
+        int base = h->table[i][idx];
+        int result = base + (h->table[i][idx + 1] - base) * (b % 16) / 16;
+        if (h->formula[i] == 0x8B)
+            v = (SensorValue){ 1, 5, result * h->a[i] };       /* 0.2 * 5 * rpm */
+        else
+            v = (SensorValue){ 5, 10, result - h->a[i] + 100 }; /* (b - 100) deg C */
+    }
+    return v;
+}
+
 int kw_group_read(KwSession *s, int group, SensorValue *values, int max_values)
 {
-    KwBlock blocks[KW_MAX_BLOCKS];
+    KwBlock blk;
     uint8_t body[1] = { (uint8_t)group };
-    int n = request(s, TITLE_GROUP_READ, body, 1, blocks, KW_MAX_BLOCKS);
-    if (n < 0)
+    /* a header+body controller only sends a new group's header after a keep-alive */
+    if (s->header.count && s->header.group != group) {
+        int err = kw_keep_alive(s);
+        if (err != KW_OK)
+            return err;
+    }
+    int n = request_one(s, TITLE_GROUP_READ, body, 1, &blk);
+    if (n <= 0)
         return n;
 
-    int count = 0;
-    for (int i = 0; i < n; i++) {
-        const KwBlock *b = &blocks[i];
-        if (b->title != TITLE_GROUP_RESP)
+    /* header + body controllers: keep the header, then ask again for the values */
+    if (blk.title == TITLE_GROUP_HEADER) {
+        int err = parse_group_header(s, group, &blk);
+        if (err < 0)
+            return err;
+        if ((n = request_one(s, TITLE_GROUP_READ, body, 1, &blk)) <= 0)
+            return n;
+    }
+    if (blk.title == TITLE_GROUP_BODY) {
+        const KwGroupHeader *h = &s->header;
+        if (h->count == 0 || h->group != group || blk.body_len > h->count)
             return KW_EUNEXPECTED;
-        if (b->body_len % 3 != 0)
-            return KW_EPROTO;
-        for (int j = 0; j < b->body_len; j += 3) {
-            if (count >= max_values)
-                return KW_EOVERFLOW;
-            values[count].sensor_id = b->body[j];
-            values[count].a = b->body[j + 1];
-            values[count].b = b->body[j + 2];
-            count++;
-        }
+        if (blk.body_len > max_values)
+            return KW_EOVERFLOW;
+        for (int i = 0; i < blk.body_len; i++)
+            values[i] = header_value(h, i, blk.body[i]);
+        return blk.body_len;
+    }
+
+    if (blk.title != TITLE_GROUP_RESP)
+        return KW_EUNEXPECTED;
+    if (blk.body_len % 3 != 0)
+        return KW_EPROTO;
+    int count = 0;
+    for (int j = 0; j < blk.body_len; j += 3) {
+        if (count >= max_values)
+            return KW_EOVERFLOW;
+        values[count].sensor_id = blk.body[j];
+        values[count].a = blk.body[j + 1];
+        values[count].b = blk.body[j + 2];
+        count++;
     }
     return count;
 }
@@ -531,6 +666,25 @@ void kw_format_sensor(const SensorValue *sv, char *out, int out_len)
     case 68: snprintf(out, out_len, "%.1f deg/s", (256 * a + b) / 7.365); break;
     case 69: snprintf(out, out_len, "%.1f Bar", (256 * a + b) * 0.3254); break;
     case 70: snprintf(out, out_len, "%.1f m/s²", (256 * a + b) * 0.192); break;
+    /* formulas used by header+body controllers (scalings per KLineKWP1281Lib) */
+    case 0x80: snprintf(out, out_len, "%g rpm", a * b); break;
+    case 0x81: snprintf(out, out_len, "%.1f %%", a * b / 256.0); break;
+    case 0x82: snprintf(out, out_len, "%.2f A", a * b / 2560.0); break;
+    case 0x83: snprintf(out, out_len, "%.1f °", a * b * 0.5 - 30); break;
+    case 0x84: snprintf(out, out_len, "%.1f °", a * b * 0.5); break;
+    case 0x85: snprintf(out, out_len, "%.2f V", a * b / 256.0); break;
+    case 0x86: snprintf(out, out_len, "%g km/h", a * b); break;
+    case 0x87: snprintf(out, out_len, "%g", a * b); break;
+    case 0x88: bits8(A & B, ba); snprintf(out, out_len, "%s", ba); break;
+    case 0x89: snprintf(out, out_len, "%.2f ms", a * b * 0.01); break;
+    case 0x8A: snprintf(out, out_len, "%.2f V", a * b * 0.001); break;
+    case 0x8D: snprintf(out, out_len, "Text %d", B); break;
+    case 0x8E: snprintf(out, out_len, "%s%c%c", A < 32 && B < 32 ? "--" : "",
+                        A >= 32 && A < 127 ? A : ' ', B >= 32 && B < 127 ? B : ' '); break;
+    case 0x8F: snprintf(out, out_len, "%.1f °", (b - 128) * a * 0.01); break;
+    case 0x90: snprintf(out, out_len, "%.2f l/h", a * b * 0.01); break;
+    case 0x92: snprintf(out, out_len, "%.3f", 1 + (b - 128) * a * 0.0001); break;
+    case 0x95: snprintf(out, out_len, "%.1f °C", (b - 100) * a * 0.1); break;
     default: snprintf(out, out_len, "(%d %d %d)", sv->sensor_id, A, B); break;
     }
 }

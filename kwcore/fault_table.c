@@ -161,6 +161,16 @@ int kw_fault_pcode(int dtc, char *out, int out_len)
     return 1;
 }
 
+void kw_fault_wiki_url(int dtc, char *out, int out_len)
+{
+    char pcode[8];
+    if (kw_fault_pcode(dtc, pcode, sizeof(pcode)))
+        snprintf(out, out_len, "https://wiki.ross-tech.com/wiki/index.php/%05d/%s/%06ld", dtc, pcode,
+                 strtol(pcode + 1, NULL, 16));
+    else
+        snprintf(out, out_len, "https://wiki.ross-tech.com/wiki/index.php/%05d", dtc);
+}
+
 /* Optional: written by assets/tools/fetch_fault_types.py (GPL-3.0 source, so not in git). */
 #if defined(__has_include) && __has_include("fault_types.h")
 #include "fault_types.h"

@@ -228,6 +228,14 @@ static void test_labels(void)
 
 static void test_fault_table(void)
 {
+    char url[96];
+    kw_fault_wiki_url(532, url, sizeof(url));
+    CHECK(strcmp(url, "https://wiki.ross-tech.com/wiki/index.php/00532") == 0);
+    kw_fault_wiki_url(17524, url, sizeof(url)); /* the EuroVan's P1116 */
+    CHECK(strcmp(url, "https://wiki.ross-tech.com/wiki/index.php/17524/P1116/004374") == 0);
+    kw_fault_wiki_url(16486, url, sizeof(url));
+    CHECK(strcmp(url, "https://wiki.ross-tech.com/wiki/index.php/16486/P0102/000258") == 0);
+
     const char csv[] =
         "Fault Code,Meaning\r\n"
         "00515,\"Cam Sensor (G40): No Signal, \"\"odd\"\"\"\r\n"
@@ -278,14 +286,15 @@ static void test_baud_switch(void)
     CHECK(strstr(s.ident, "ME7.1") != NULL);
     kw_end(&s);
 
-    /* a 9600 controller after it: switches back */
-    CHECK(kw_connect_attempts(&s, &io, 0x17, 1) == KW_OK);
-    CHECK(s.baud == 10400); /* the fake's other controllers answer at any speed */
+    /* the 01P transmission answers at 1200: $80 at 10400... worked out in one switch */
+    CHECK(kw_connect_attempts(&s, &io, 0x02, 1) == KW_OK);
+    CHECK(s.baud == 1200 && f.baud_switches == 2);
+    CHECK(strstr(s.ident, "01P927733") != NULL);
     kw_end(&s);
 
-    /* the speed stays: the next engine connect needs no switch */
+    /* remembered per controller: back to the engine switches before waking it */
     CHECK(kw_connect_attempts(&s, &io, 0x01, 1) == KW_OK);
-    CHECK(f.baud_switches == 1);
+    CHECK(s.baud == 10400 && f.baud_switches == 3 && f.wakes == 3);
     kw_end(&s);
 
     /* without set_baud the old behaviour remains: no response, sync byte reported */
@@ -402,7 +411,8 @@ static void test_sensor_numbers(void)
 {
     /* kw_sensor_number must agree with the text kw_format_sensor shows */
     static const int ids[] = { 1, 2, 3, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 18, 19, 20, 21, 22, 23, 24,
-                               25, 26, 28, 31, 32, 33, 34, 35, 36, 40, 43, 48, 52, 53, 54, 55, 60, 64, 65, 66 };
+                               25, 26, 28, 31, 32, 33, 34, 35, 36, 40, 43, 48, 52, 53, 54, 55, 60, 64, 65, 66,
+                               0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x89, 0x8A, 0x8F, 0x90, 0x92, 0x95 };
     static const int samples[][2] = { { 0, 0 }, { 1, 1 }, { 10, 190 }, { 100, 138 }, { 200, 20 },
                                       { 255, 255 }, { 37, 128 }, { 3, 250 } };
     for (size_t i = 0; i < sizeof(ids) / sizeof(ids[0]); i++) {

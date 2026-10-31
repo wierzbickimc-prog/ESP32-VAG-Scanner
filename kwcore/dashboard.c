@@ -3,12 +3,12 @@
 #include <stdio.h>
 #include <string.h>
 
-/* VW standardized petrol-engine groups (see assets/labels.csv, "@petrol"). */
+/* VW standardized petrol-engine groups (see assets/labels.csv, "@petrol"), and
+ * the 01P transmission's ATF temperature, checked on the EuroVan. */
 static const KwDashPreset PRESETS[] = {
     { "Coolant temperature", KW_SLOT_SENSOR, 0x01, 4, 3, NULL },
     { "Battery voltage", KW_SLOT_SENSOR, 0x01, 4, 2, NULL },
-    { "ATF temperature", KW_SLOT_SENSOR, 0x02, 5, 1,
-      "Group 5 field 1 per Ross-Tech; some transmissions use group 2 or 4. Check it in Live data." },
+    { "ATF temperature", KW_SLOT_SENSOR, 0x02, 5, 1, NULL },
     { "Fuel economy", KW_SLOT_FUEL, KW_FUEL_ADDRESS, 0, 0, NULL },
     { "Engine speed", KW_SLOT_SENSOR, 0x01, 1, 1, NULL },
     { "Vehicle speed", KW_SLOT_SENSOR, 0x01, 5, 3, NULL },
@@ -185,6 +185,20 @@ int kw_sensor_number(const SensorValue *sv, double *value, const char **unit)
     case 64: v = A + B; u = "Ω"; break;
     case 65: v = 0.01 * a * (b - 127); u = "mm"; break;
     case 66: v = (a * b) / 511.12; u = "V"; break;
+    case 0x80: v = a * b; u = "rpm"; break;
+    case 0x81: v = a * b / 256.0; u = "%"; break;
+    case 0x82: v = a * b / 2560.0; u = "A"; break;
+    case 0x83: v = a * b * 0.5 - 30; u = "°"; break;
+    case 0x84: v = a * b * 0.5; u = "°"; break;
+    case 0x85: v = a * b / 256.0; u = "V"; break;
+    case 0x86: v = a * b; u = "km/h"; break;
+    case 0x87: v = a * b; u = ""; break;
+    case 0x89: v = a * b * 0.01; u = "ms"; break;
+    case 0x8A: v = a * b * 0.001; u = "V"; break;
+    case 0x8F: v = (b - 128) * a * 0.01; u = "°"; break;
+    case 0x90: v = a * b * 0.01; u = "l/h"; break;
+    case 0x92: v = 1 + (b - 128) * a * 0.0001; u = ""; break;
+    case 0x95: v = (b - 100) * a * 0.1; u = "°C"; break;
     default: return 0;
     }
     *value = v;

@@ -200,6 +200,7 @@ int kw_serial_open(KwIo *io, const char *port, int baud)
     io->sleep_us = serial_sleep_us;
     io->set_baud = serial_set_baud;
     io->baud = baud;
+    memset(io->addr_baud, 0, sizeof(io->addr_baud));
     io->ctx = c;
     return 0;
 
