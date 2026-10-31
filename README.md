@@ -10,8 +10,17 @@ There are two front ends, both driving the same cable with the same protocol cor
 - **ESP32-P4**: a standalone touch-screen unit (Guition JC8012P4A1C). The KKL cable plugs
   into the P4's USB port, with no wiring.
 
-> **Status:** everything works against the built-in simulated car, and the P4 firmware
-> runs on hardware. It has **not yet been tested on a real car**.
+> **Status:** tested on a 2002 EuroVan from the Mac: the engine (Motronic ME7.1, 10400 baud)
+> and the 01P automatic transmission (1200 baud) read identification, faults and live data.
+> The P4 runs on hardware; its first real-car test is under way. Other cars and controllers
+> are untested.
+
+## Install on an ESP32-P4 (no tools needed)
+
+Open the **[install page](https://wierzbickimc-prog.github.io/ESP32-VAG-Scanner/)** in Chrome or
+Edge, connect the board's USB-serial port, and click **Install**. It uses
+[ESP Web Tools](https://esphome.github.io/esp-web-tools/). Each GitHub release builds the firmware
+and updates the page automatically (`.github/workflows/firmware.yml`).
 
 ## Screenshots
 
@@ -149,7 +158,9 @@ Wi-Fi button at the top opens the Wi-Fi screen; Wi-Fi is only used for the wiki 
 
 ## Optional data (not in this repo)
 
-Both apps work without these. With them, faults get descriptions and type text.
+Both apps work without these. With them, faults get descriptions and type text. Released P4
+firmware includes the fault type names but never the Ross-Tech descriptions; it reads those
+from the Ross-Tech wiki over Wi-Fi instead.
 
 - **Fault descriptions:** a `code,meaning` CSV saved as `ross-tech-fault-codes.csv` in the repo
   root (the P4 build embeds it), and on the Mac as
@@ -159,11 +170,21 @@ Both apps work without these. With them, faults get descriptions and type text.
   pinned commit into `kwcore/fault_types.h`. On the Mac, run `touch kwcore/fault_table.c` before
   the next build so it picks the file up.
 
+## License
+
+GNU General Public License v3.0 (see [`LICENSE`](LICENSE)): use it, share it, and change it
+freely, and pass the same freedom on with anything you distribute. The fault type names come
+from GPL-3.0 code. Bundled third-party parts keep their own licences (MIT and Apache-2.0, all
+compatible), and the car photos are CC-licensed as listed in `assets/CREDITS.md`. Not affiliated
+with Volkswagen or Ross-Tech.
+
 ## Credits
 
 - Protocol behaviour follows [kw1281test](https://github.com/gmenounos/kw1281test) by Greg
   Menounos (MIT).
 - Display and touch drivers are vendored from
   [chipguyhere/JC8012P4A1C_display](https://github.com/chipguyhere/JC8012P4A1C_display) (MIT).
+- Fault type names come from [KLineKWP1281Lib_ESP32](https://github.com/domnulvlad/KLineKWP1281Lib_ESP32)
+  by domnulvlad (GPL-3.0); header+body measuring-group formulas follow the same library.
 - Car photos come from Wikimedia Commons; authors and licences are in
   [`assets/CREDITS.md`](assets/CREDITS.md) and shown in both apps.

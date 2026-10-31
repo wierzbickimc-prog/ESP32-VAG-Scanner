@@ -1,0 +1,94 @@
+# Builds the ESP32-P4 firmware on every change, and on a published release
+# (or a manual run) puts it on GitHub Pages behind the ESP Web Tools install
+# button and attaches it to the release.
+#
+# The build includes the KW1281 fault type names (GPL-3.0, like this project)
+# and never the Ross-Tech fault description table, which isn't ours to share.
+name: Firmware
+
+on:
+  push:
+    branches: [main]
+    paths: ["esp32/**", "kwcore/**", "assets/**", "web/**", ".github/workflows/firmware.yml"]
+  pull_request:
+    paths: ["esp32/**", "kwcore/**", "assets/**", "web/**", ".github/workflows/firmware.yml"]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the fault type names (GPL-3.0)
+        run: python3 assets/tools/fetch_fault_types.py
+
+      - name: Make sure the Ross-Tech table isn't in the build
+        run: test ! -e ross-tech-fault-codes.csv
+
+      - name: Build and merge into one image
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.5.6
+          target: esp32p4
+          path: esp32
+          command: idf.py build && idf.py merge-bin -o esp32-vag-scanner-p4.bin
+
+      - name: Assemble the install page
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="${TAG:-dev-${GITHUB_SHA::7}}"
+          mkdir -p site
+          cp web/index.html site/
+          cp esp32/build/esp32-vag-scanner-p4.bin site/
+          python3 - "$version" <<'EOF'
+          import json, sys
+          m = json.load(open("web/manifest.json"))
+          m["version"] = sys.argv[1]
+          json.dump(m, open("site/manifest.json", "w"), indent=2)
+          EOF
+          echo "Firmware $version: $(stat -c %s site/esp32-vag-scanner-p4.bin) bytes" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: esp32-vag-scanner-p4
+          path: site/
+
+      - if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/
+
+  publish:
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+      - if: github.event_name == 'release'
+        uses: actions/download-artifact@v4
+        with:
+          name: esp32-vag-scanner-p4
+
+      - if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" esp32-vag-scanner-p4.bin --repo "$GITHUB_REPOSITORY"
