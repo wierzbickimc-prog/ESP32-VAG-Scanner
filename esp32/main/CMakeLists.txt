@@ -18,14 +18,16 @@ idf_component_register(
         gui.c
         io_esp32_ftdi.c
         kline_task.c
+        net.c
         ../../kwcore/car_profile.c
         ../../kwcore/dashboard.c
         ../../kwcore/fake_ecu.c
         ../../kwcore/fault_table.c
         ../../kwcore/kw1281.c
         ../../kwcore/labels.c
+        ../../kwcore/wikitext.c
     INCLUDE_DIRS . ../../kwcore
-    REQUIRES usb esp_timer esp_lcd esp_driver_gpio esp_driver_i2c esp_driver_uart nvs_flash jc8012p4a1c
+    REQUIRES usb esp_timer esp_wifi esp_netif esp_event esp_http_client mbedtls esp_lcd esp_driver_gpio esp_driver_i2c esp_driver_uart nvs_flash jc8012p4a1c
     EMBED_FILES
         "${hero_dir}/hero_eurovan.rgb565"
         "${hero_dir}/hero_harlequin.rgb565"

@@ -9,6 +9,8 @@
  *   faults | live     read faults / toggle live data on the open controller
  *   plus | minus      step the measuring group
  *   dash [start|stop] open the dashboard, and start or stop reading
+ *   wifi [scan]       open the Wi-Fi screen (and scan)
+ *   wiki <code>       open the Ross-Tech wiki viewer for a fault code
  *   back | home | credits | chooser
  */
 #include "debug_console.h"

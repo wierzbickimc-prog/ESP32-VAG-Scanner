@@ -4,3 +4,7 @@ dependencies:
   lvgl/lvgl: "^9.2.0"
   espressif/esp_lvgl_port: "^2.4.0"
   espressif/esp_lcd_touch: "^1.1.0"
+  # Wi-Fi through the on-board ESP32-C6. Pinned: its ESP-Hosted firmware is 2.1;
+  # newer 3.x hosts ask to reflash the C6, which this project doesn't do.
+  espressif/esp_hosted: "==2.0.17"
+  espressif/esp_wifi_remote: "==1.3.0"

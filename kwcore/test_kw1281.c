@@ -8,6 +8,7 @@
 #include "car_profile.h"
 #include "labels.h"
 #include "dashboard.h"
+#include "wikitext.h"
 #include "kw1281.h"
 
 #include <math.h>
@@ -305,6 +306,45 @@ static void test_baud_switch(void)
     CHECK(f.errors == 0);
 }
 
+static void test_wikitext(void)
+{
+    static const char page[] =
+        "== 12345/P0000/000000 - Example Sensor: Open Circuit ==\n"
+        "<!-- editor note -->\n"
+        "{{Infobox|code=12345\n|extra={{nested}}}}\n"
+        "==== Possible Causes ====\n"
+        "\n"
+        "* Wiring from/to [[Example Sensor (G1)|sensor G1]] faulty<ref>Bentley</ref>\n"
+        "** '''Check''' the [[Fuse]] &amp; relay\n"
+        "* See [https://example.com the manual] \xE2\x80\x93 90\xC2\xB0" "C\n"
+        "Some ''plain'' text.<br/>More.\n"
+        "{|\n|-\n| cell one || cell two\n|}\n"
+        "__FORCETOC__\n"
+        "[[Category:Fault Codes]]\n";
+    char out[512];
+    kw_wikitext_render(page, strlen(page), out, sizeof(out));
+    CHECK(strcmp(out,
+                 "= Example Sensor: Open Circuit\n"
+                 "# Possible Causes\n"
+                 "* Wiring from/to sensor G1 faulty\n"
+                 "** Check the Fuse & relay\n"
+                 "* See the manual - 90\xC2\xB0" "C\n"
+                 "  Some plain text. More.\n"
+                 "  cell one    cell two\n") == 0);
+    if (failures)
+        fprintf(stderr, "  got:\n%s", out);
+
+    char target[64];
+    CHECK(kw_wikitext_redirect("#REDIRECT [[17524/P1116/004374]]", target, sizeof(target)));
+    CHECK(strcmp(target, "17524/P1116/004374") == 0);
+    CHECK(!kw_wikitext_redirect(page, target, sizeof(target)));
+
+    /* a small buffer truncates cleanly */
+    char tiny[16];
+    CHECK(kw_wikitext_render(page, strlen(page), tiny, sizeof(tiny)) == 15);
+    CHECK(tiny[15] == '\0');
+}
+
 typedef struct {
     int count, stop_after;
     int per_address[256];
@@ -493,6 +533,7 @@ int main(void)
         { "car detection from idents", test_car_detection },
         { "measuring-block labels", test_labels },
         { "baud switch to 10400 (ME7)", test_baud_switch },
+        { "wiki page to text", test_wikitext },
         { "dashboard plan", test_dashboard_plan },
         { "dashboard reads across controllers", test_dashboard_run },
         { "sensor numbers match formatted text", test_sensor_numbers },

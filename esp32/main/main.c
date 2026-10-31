@@ -6,6 +6,7 @@
 #include "esp_log.h"
 #include "gui.h"
 #include "kline_task.h"
+#include "net.h"
 #include "nvs_flash.h"
 
 static const char *TAG = "vagscanner";
@@ -50,6 +51,7 @@ void app_main(void)
         gui_build();
         board_lvgl_unlock();
         kline_start(gui_on_kline_event);
+        net_start(gui_on_net_event); /* Wi-Fi comes up in the background; diagnostics don't wait */
         debug_console_start();
     } else {
         ESP_LOGW(TAG, "Display unavailable; vehicle communication disabled until the UI is restored");

@@ -54,6 +54,8 @@ All screenshots show the simulated EuroVan (demo mode).
   coolant temperature, battery voltage, ATF temperature and fuel economy. Each slot can show
   a preset, or any field you pin from a controller's Live data (the pin button on the Mac;
   tap the value on the P4). US or metric units.
+- Fault codes link to the **Ross-Tech wiki**. The Mac opens the page in the browser. The P4
+  shows a QR code, and with **Wi-Fi** (through the board's ESP32-C6) reads the page itself.
 - **Fuel economy** estimated from the engine's air mass and vehicle speed (VW standard groups
   2 and 5, assuming a stoichiometric mixture), with instant and trip average. On the Mac,
   **Calibrate** scales the estimate to match the fuel actually pumped at a fill-up.
@@ -142,7 +144,8 @@ idf.py build
 idf.py -p /dev/cu.usbserial-XXXX flash monitor   # the board's CH340 port
 ```
 
-On the P4, hold **Scan** to open the demo cars. **Dashboard** sits between Scan and Demo.
+On the P4, hold **Scan** to open the demo cars. **Dashboard** sits between Scan and Demo. The
+Wi-Fi button at the top opens the Wi-Fi screen; Wi-Fi is only used for the wiki viewer.
 
 ## Optional data (not in this repo)
 

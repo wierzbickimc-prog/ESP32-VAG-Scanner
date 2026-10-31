@@ -1,5 +1,21 @@
 # Handover: ESP32 VAG Scanner (macOS + ESP32-P4)
 
+## Wi-Fi and the Ross-Tech viewer on the P4 (2026-10-31)
+
+- The board has an **ESP32-C6** on SDIO (P4 Function EV board pins: CLK 18, CMD 19, D0-D3 14-17,
+  reset 54) running ESP-Hosted **2.1**. Host pinned to `esp_hosted ==2.0.17` +
+  `esp_wifi_remote ==1.3.0`: clean link, no version warning. 2.13 works but warns; 3.x reports a
+  major mismatch and wants to OTA the C6. **Don't reflash the C6** (no other way to recover it).
+- `net.c`: one task (priority 4, below the K-line's 6) for Wi-Fi start, scan, connect/retry,
+  forget, and HTTPS GETs of `index.php?title=...&action=raw` with the CA bundle (Let's Encrypt /
+  ISRG Root X1). Credentials in NVS (`wifi_ssid`/`wifi_pass`); esp_wifi storage is RAM. A
+  missing C6 only disables Wi-Fi.
+- `kwcore/wikitext.c` renders wikitext to marked lines (title / heading / bullet / text); tested.
+  Fault details on the P4 have **Read on Ross-Tech** plus the QR code. Console: `wifi`,
+  `wifi scan`, `wiki <code>`.
+- Verified on the board with the owner's network: P1116 and 00532 pages render.
+- This supersedes "No Wi-Fi" below for this purpose only. Wi-Fi is not a K-line bridge.
+
 ## EuroVan transmission: 1200 baud, header+body groups (2026-10-31)
 
 - **02 is 01P927733CG "AG4 Getriebe 01P"**, KW1281 at **1200 baud**, no faults stored. At 9600
@@ -157,6 +173,7 @@ read/clear fault codes, read measuring groups. Two targets, **same cable, same p
 - **The P4 is sealed: USB ports only, no GPIO access, no wiring, no soldering.**
   Any design that drives the K-line from P4 GPIO pins is impossible.
 - **No Wi-Fi bridge and no "P4 as interface for the Mac" design.** Each target talks to its own cable.
+  (Wi-Fi exists on the P4 only for the Ross-Tech wiki viewer; see the 2026-10-31 notes.)
 - **The ground truth is the upstream C# tool in `kw1281test/`.** When unsure how the
   protocol behaves, read `KwpCommon.cs` and `KW1281Dialog.cs` and match them.
 
@@ -324,7 +341,7 @@ FTDI vendor control requests (bmRequestType `0x40`, wIndex = interface, usually 
   gets results back. Never call kwcore from an LVGL event callback.
 - **Don't block startup.** Never scan at boot before the UI is drawn. Show "Connect cable"
   until the FTDI device attaches, then offer a Scan button with progress.
-- No Wi-Fi.
+- No Wi-Fi for diagnostics (2026-10-31: Wi-Fi added for the wiki viewer only).
 
 ## Definition of done
 

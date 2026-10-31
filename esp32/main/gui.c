@@ -3,6 +3,7 @@
  * photo fills the top of the home screen, controllers sit in a card grid
  * below, and each controller opens a detail screen with Faults / Live data.
  * The dashboard screen shows four live values with trends (kwcore/dashboard.c).
+ * Wi-Fi (net.c) only feeds the Ross-Tech wiki viewer for fault codes.
  */
 #include "gui.h"
 
@@ -18,6 +19,7 @@
 #include "fault_table.h"
 #include "labels.h"
 #include "lvgl.h"
+#include "net.h"
 #include "nvs.h"
 
 #define C_BG       0x0D1014
@@ -285,6 +287,8 @@ static void set_card_status(module_t *m)
 
 static void open_module_index(int idx);
 static void on_dash_open(lv_event_t *e);
+static void on_wifi_open(lv_event_t *e);
+static lv_obj_t *s_wifi_icon;
 static void on_value_tile(lv_event_t *e);
 
 static void on_card(lv_event_t *e)
@@ -545,6 +549,11 @@ static void build_home(void)
     lv_obj_set_flex_align(pill, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(pill, 10, 0);
     lv_obj_align(pill, LV_ALIGN_TOP_RIGHT, -28, 28);
+    s_wifi_icon = round_button(s_home, LV_SYMBOL_WIFI, on_wifi_open);
+    lv_obj_set_size(s_wifi_icon, 60, 60);
+    lv_obj_set_pos(s_wifi_icon, 496, 22);
+    lv_obj_set_style_text_color(lv_obj_get_child(s_wifi_icon, 0), col(C_MUTED), 0);
+
     s_pill_dot = surface(pill, C_MUTED, LV_RADIUS_CIRCLE);
     lv_obj_set_size(s_pill_dot, 12, 12);
     s_pill_label = text(pill, &lv_font_montserrat_16, C_TEXT, "");
@@ -1448,6 +1457,336 @@ static void build_dash(void)
     dash_set_running(false);
 }
 
+/* ---- Wi-Fi and the wiki viewer ------------------------------------------------ */
+
+/*
+ * Wi-Fi only serves the Ross-Tech wiki viewer (net.c). The home screen shows
+ * its state on a small button that opens the Wi-Fi screen.
+ */
+
+static lv_obj_t *s_wifi, *s_wifi_status, *s_wifi_list, *s_wifi_forget;
+static lv_obj_t *s_pw_layer, *s_pw_ta;
+static char s_pw_ssid[33];
+static lv_obj_t *s_wiki, *s_wiki_title, *s_wiki_status, *s_wiki_body;
+static lv_obj_t *s_wiki_return;
+static int s_wiki_dtc = -1;
+static char s_net_detail[48];
+
+static uint32_t net_color(net_state_t st)
+{
+    return st == NET_CONNECTED ? C_OK : st == NET_CONNECTING ? C_WARN : st == NET_FAILED ? C_ERR : C_MUTED;
+}
+
+static void net_show_state(void)
+{
+    net_state_t st = net_state();
+    lv_obj_set_style_text_color(lv_obj_get_child(s_wifi_icon, 0), col(net_color(st)), 0);
+    const char *ssid = net_saved_ssid();
+    switch (st) {
+    case NET_STARTING:    lv_label_set_text(s_wifi_status, "Starting Wi-Fi..."); break;
+    case NET_UNAVAILABLE: lv_label_set_text(s_wifi_status, "Wi-Fi isn't available: the ESP32-C6 didn't answer."); break;
+    case NET_OFF:         lv_label_set_text(s_wifi_status, "Not connected. Tap Scan and pick your network."); break;
+    case NET_CONNECTING:  label_printf(s_wifi_status, "%s  " LV_SYMBOL_BULLET "  %s", ssid, s_net_detail); break;
+    case NET_CONNECTED:   label_printf(s_wifi_status, LV_SYMBOL_OK "  Connected to %s  " LV_SYMBOL_BULLET "  %s", ssid, s_net_detail); break;
+    case NET_FAILED:      label_printf(s_wifi_status, LV_SYMBOL_WARNING "  %s: %s Tap it below to try again.", ssid, s_net_detail); break;
+    }
+    lv_obj_set_hidden(s_wifi_forget, ssid[0] == '\0');
+}
+
+static void on_wifi_open(lv_event_t *e)
+{
+    (void)e;
+    net_show_state();
+    lv_screen_load_anim(s_wifi, LV_SCREEN_LOAD_ANIM_MOVE_LEFT, 220, 0, false);
+}
+
+static void on_wifi_scan(lv_event_t *e)
+{
+    (void)e;
+    lv_obj_clean(s_wifi_list);
+    text(s_wifi_list, &lv_font_montserrat_20, C_MUTED, "Scanning...");
+    net_scan();
+}
+
+static void on_wifi_forget(lv_event_t *e)
+{
+    (void)e;
+    net_forget();
+}
+
+static void pw_close(void)
+{
+    if (s_pw_layer) {
+        lv_obj_delete(s_pw_layer);
+        s_pw_layer = NULL;
+    }
+}
+
+static void pw_connect(void)
+{
+    net_connect(s_pw_ssid, lv_textarea_get_text(s_pw_ta));
+    pw_close();
+}
+
+static void on_pw_button(lv_event_t *e)
+{
+    if (lv_event_get_user_data(e))
+        pw_connect();
+    else
+        pw_close();
+}
+
+static void on_pw_keyboard(lv_event_t *e)
+{
+    if (lv_event_get_code(e) == LV_EVENT_READY)
+        pw_connect();
+    else if (lv_event_get_code(e) == LV_EVENT_CANCEL)
+        pw_close();
+}
+
+static void on_pw_show(lv_event_t *e)
+{
+    lv_obj_t *cb = lv_event_get_target(e);
+    lv_textarea_set_password_mode(s_pw_ta, !lv_obj_has_state(cb, LV_STATE_CHECKED));
+}
+
+/* Password entry over the Wi-Fi screen, with the on-screen keyboard. */
+static void ask_password(const char *ssid)
+{
+    pw_close();
+    snprintf(s_pw_ssid, sizeof(s_pw_ssid), "%s", ssid);
+    s_pw_layer = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_pw_layer);
+    lv_obj_set_size(s_pw_layer, SCREEN_W, SCREEN_H);
+    lv_obj_set_style_bg_color(s_pw_layer, col(0x000000), 0);
+    lv_obj_set_style_bg_opa(s_pw_layer, LV_OPA_70, 0);
+    lv_obj_set_clickable(s_pw_layer, true);
+
+    lv_obj_t *panel = surface(s_pw_layer, C_SURFACE, 20);
+    lv_obj_set_size(panel, 736, LV_SIZE_CONTENT);
+    lv_obj_set_pos(panel, 32, 200);
+    lv_obj_set_style_pad_all(panel, 24, 0);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(panel, 16, 0);
+    label_printf(text(panel, &lv_font_montserrat_28, C_TEXT, ""), "Password for %s", ssid);
+
+    s_pw_ta = lv_textarea_create(panel);
+    lv_obj_set_width(s_pw_ta, LV_PCT(100));
+    lv_textarea_set_one_line(s_pw_ta, true);
+    lv_textarea_set_password_mode(s_pw_ta, true);
+    lv_textarea_set_max_length(s_pw_ta, 64);
+    lv_obj_set_style_text_font(s_pw_ta, &lv_font_montserrat_24, 0);
+
+    lv_obj_t *show = lv_checkbox_create(panel);
+    lv_checkbox_set_text(show, "Show password");
+    lv_obj_add_event_cb(show, on_pw_show, LV_EVENT_VALUE_CHANGED, NULL);
+
+    lv_obj_t *buttons = row(panel, 16);
+    lv_obj_t *cancel = button(buttons, "Cancel", C_SURFACE2, C_TEXT, on_pw_button, NULL);
+    lv_obj_set_size(cancel, 200, 64);
+    lv_obj_t *go = button(buttons, LV_SYMBOL_WIFI "  Connect", C_ACCENT, C_TEXT, on_pw_button, (void *)1);
+    lv_obj_set_size(go, 260, 64);
+
+    lv_obj_t *kb = lv_keyboard_create(s_pw_layer);
+    lv_obj_set_size(kb, SCREEN_W, 440);
+    lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_keyboard_set_textarea(kb, s_pw_ta);
+    lv_obj_add_event_cb(kb, on_pw_keyboard, LV_EVENT_ALL, NULL);
+}
+
+static void on_network(lv_event_t *e)
+{
+    lv_obj_t *b = lv_event_get_current_target(e);
+    const char *ssid = lv_label_get_text(lv_obj_get_child(b, 0));
+    if (lv_obj_get_user_data(b))
+        ask_password(ssid);
+    else
+        net_connect(ssid, "");
+}
+
+static void show_networks(const net_event_t *ev)
+{
+    lv_obj_clean(s_wifi_list);
+    if (ev->count < 0) {
+        text(s_wifi_list, &lv_font_montserrat_20, C_WARN, "Scan failed. Try again in a moment.");
+        return;
+    }
+    if (ev->count == 0) {
+        text(s_wifi_list, &lv_font_montserrat_20, C_MUTED, "No networks found.");
+        return;
+    }
+    for (int i = 0; i < ev->count; i++) {
+        const net_ap_t *ap = &ev->aps[i];
+        lv_obj_t *b = button(s_wifi_list, NULL, C_SURFACE, C_TEXT, on_network, NULL);
+        lv_obj_set_size(b, LV_PCT(100), 72);
+        lv_obj_set_style_radius(b, 16, 0);
+        lv_obj_set_user_data(b, ap->secure ? (void *)1 : NULL);
+        lv_obj_t *name = text(b, &lv_font_montserrat_24, C_TEXT, ap->ssid);
+        lv_obj_align(name, LV_ALIGN_LEFT_MID, 8, 0);
+        lv_obj_set_width(name, 520);
+        lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
+        const char *bars = ap->rssi > -60 ? "Strong" : ap->rssi > -75 ? "Good" : "Weak";
+        lv_obj_t *info = text(b, &lv_font_montserrat_16, C_MUTED, "");
+        label_printf(info, "%s  " LV_SYMBOL_BULLET "  %s", ap->secure ? "Password" : "Open", bars);
+        lv_obj_align(info, LV_ALIGN_RIGHT_MID, -8, 0);
+    }
+}
+
+static void build_wifi(void)
+{
+    s_wifi = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_wifi, col(C_BG), 0);
+    lv_obj_set_scrollable(s_wifi, false);
+
+    lv_obj_t *back = round_button(s_wifi, LV_SYMBOL_LEFT, go_home);
+    lv_obj_set_style_bg_color(back, col(C_SURFACE), 0);
+    lv_obj_set_style_bg_opa(back, LV_OPA_COVER, 0);
+    lv_obj_set_pos(back, 24, 24);
+    lv_obj_set_pos(text(s_wifi, &lv_font_montserrat_36, C_TEXT, "Wi-Fi"), 108, 32);
+
+    lv_obj_t *note = text(s_wifi, &lv_font_montserrat_16, C_MUTED,
+                          "Used only to read fault code pages from the Ross-Tech wiki. "
+                          "Diagnostics never need it.");
+    lv_obj_set_width(note, 736);
+    lv_obj_set_pos(note, 32, 104);
+    s_wifi_status = text(s_wifi, &lv_font_montserrat_20, C_TEXT, "");
+    lv_obj_set_width(s_wifi_status, 736);
+    lv_label_set_long_mode(s_wifi_status, LV_LABEL_LONG_WRAP);
+    lv_obj_set_pos(s_wifi_status, 32, 150);
+
+    lv_obj_t *scan = button(s_wifi, LV_SYMBOL_REFRESH "  Scan", C_ACCENT, C_TEXT, on_wifi_scan, NULL);
+    lv_obj_set_size(scan, 360, 72);
+    lv_obj_set_pos(scan, 32, 220);
+    s_wifi_forget = button(s_wifi, LV_SYMBOL_TRASH "  Forget network", C_SURFACE, C_ERR, on_wifi_forget, NULL);
+    lv_obj_set_size(s_wifi_forget, 360, 72);
+    lv_obj_set_pos(s_wifi_forget, 408, 220);
+
+    s_wifi_list = column(s_wifi, 12);
+    lv_obj_set_size(s_wifi_list, 736, SCREEN_H - 320 - 24);
+    lv_obj_set_pos(s_wifi_list, 32, 320);
+    lv_obj_set_scrollable(s_wifi_list, true);
+    lv_obj_set_scroll_dir(s_wifi_list, LV_DIR_VER);
+}
+
+/* ---- wiki viewer ---- */
+
+static void on_wiki_back(lv_event_t *e)
+{
+    (void)e;
+    s_wiki_dtc = -1;
+    lv_screen_load_anim(s_wiki_return ? s_wiki_return : s_home, LV_SCREEN_LOAD_ANIM_MOVE_RIGHT, 220, 0, false);
+}
+
+static void open_wiki(int dtc)
+{
+    char pcode[8] = "";
+    s_wiki_return = lv_screen_active() == s_wiki ? s_wiki_return : lv_screen_active();
+    s_wiki_dtc = dtc;
+    if (kw_fault_pcode(dtc, pcode, sizeof(pcode)))
+        label_printf(s_wiki_title, "%05d  " LV_SYMBOL_BULLET "  %s", dtc, pcode);
+    else
+        label_printf(s_wiki_title, "%05d", dtc);
+    lv_obj_clean(s_wiki_body);
+    lv_label_set_text(s_wiki_status, net_state() == NET_CONNECTED ? "Loading from wiki.ross-tech.com..." : "");
+    lv_screen_load_anim(s_wiki, LV_SCREEN_LOAD_ANIM_MOVE_LEFT, 220, 0, false);
+    net_fetch_wiki(dtc);
+}
+
+static void on_read_wiki(lv_event_t *e)
+{
+    lv_obj_t *mbox = lv_obj_get_parent(lv_obj_get_parent(lv_event_get_target(e)));
+    int dtc = (int)(intptr_t)lv_event_get_user_data(e);
+    lv_msgbox_close_async(mbox);
+    open_wiki(dtc);
+}
+
+/* Lines from kw_wikitext_render: "= " title, "# " heading, "* "/"** " list, "  " text. */
+static void show_page(const net_event_t *ev)
+{
+    if (ev->dtc != s_wiki_dtc)
+        return;
+    lv_obj_clean(s_wiki_body);
+    if (!ev->ok) {
+        lv_obj_set_style_text_color(s_wiki_status, col(C_WARN), 0);
+        lv_label_set_text(s_wiki_status, ev->text);
+        return;
+    }
+    lv_obj_set_style_text_color(s_wiki_status, col(C_MUTED), 0);
+    lv_label_set_text(s_wiki_status, "From the Ross-Tech wiki (community-written; check against the repair manual).");
+
+    static char line[1024], shown[1040];
+    for (const char *p = ev->text; *p;) {
+        const char *nl = strchr(p, '\n');
+        size_t n = nl ? (size_t)(nl - p) : strlen(p);
+        if (n >= sizeof(line))
+            n = sizeof(line) - 1;
+        memcpy(line, p, n);
+        line[n] = '\0';
+        p = nl ? nl + 1 : p + n;
+
+        lv_obj_t *l;
+        if (strncmp(line, "= ", 2) == 0) {
+            l = text(s_wiki_body, &lv_font_montserrat_28, C_TEXT, line + 2);
+        } else if (strncmp(line, "# ", 2) == 0) {
+            l = text(s_wiki_body, &lv_font_montserrat_20, C_ACCENT, line + 2);
+            lv_obj_set_style_pad_top(l, 14, 0);
+        } else if (strncmp(line, "** ", 3) == 0) {
+            snprintf(shown, sizeof(shown), "      -  %s", line + 3);
+            l = text(s_wiki_body, &lv_font_montserrat_20, C_TEXT, shown);
+        } else if (strncmp(line, "* ", 2) == 0) {
+            snprintf(shown, sizeof(shown), LV_SYMBOL_BULLET "  %s", line + 2);
+            l = text(s_wiki_body, &lv_font_montserrat_20, C_TEXT, shown);
+        } else {
+            l = text(s_wiki_body, &lv_font_montserrat_20, C_MUTED, line[0] == ' ' ? line + 2 : line);
+        }
+        lv_obj_set_width(l, LV_PCT(100));
+        lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+    }
+}
+
+static void build_wiki(void)
+{
+    s_wiki = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_wiki, col(C_BG), 0);
+    lv_obj_set_scrollable(s_wiki, false);
+
+    lv_obj_t *back = round_button(s_wiki, LV_SYMBOL_LEFT, on_wiki_back);
+    lv_obj_set_style_bg_color(back, col(C_SURFACE), 0);
+    lv_obj_set_style_bg_opa(back, LV_OPA_COVER, 0);
+    lv_obj_set_pos(back, 24, 24);
+    s_wiki_title = text(s_wiki, &lv_font_montserrat_36, C_TEXT, "");
+    lv_obj_set_pos(s_wiki_title, 108, 32);
+    s_wiki_status = text(s_wiki, &lv_font_montserrat_16, C_MUTED, "");
+    lv_obj_set_width(s_wiki_status, 736);
+    lv_label_set_long_mode(s_wiki_status, LV_LABEL_LONG_WRAP);
+    lv_obj_set_pos(s_wiki_status, 32, 104);
+
+    s_wiki_body = column(s_wiki, 10);
+    lv_obj_set_size(s_wiki_body, 736, SCREEN_H - 160 - 24);
+    lv_obj_set_pos(s_wiki_body, 32, 160);
+    lv_obj_set_scrollable(s_wiki_body, true);
+    lv_obj_set_scroll_dir(s_wiki_body, LV_DIR_VER);
+}
+
+void gui_on_net_event(const net_event_t *ev)
+{
+    if (!board_lvgl_lock())
+        return;
+    switch (ev->type) {
+    case NET_EV_STATE:
+        snprintf(s_net_detail, sizeof(s_net_detail), "%s", ev->detail ? ev->detail : "");
+        net_show_state();
+        break;
+    case NET_EV_SCAN:
+        show_networks(ev);
+        break;
+    case NET_EV_PAGE:
+        show_page(ev);
+        break;
+    }
+    board_lvgl_unlock();
+}
+
 /* ---- results -------------------------------------------------------------- */
 
 static void on_fault_close(lv_event_t *e)
@@ -1486,7 +1825,7 @@ static void on_fault_card(lv_event_t *e)
     lv_msgbox_add_title(mbox, title);
     lv_msgbox_add_text(mbox, body);
 
-    /* the P4 has no browser: a QR code opens the Ross-Tech page on a phone */
+    /* read the page here over Wi-Fi, or scan the QR code to open it on a phone */
     char url[96];
     kw_fault_wiki_url(dtc, url, sizeof(url));
     lv_obj_t *link = lv_obj_create(lv_msgbox_get_content(mbox));
@@ -1504,11 +1843,13 @@ static void on_fault_card(lv_event_t *e)
     lv_obj_set_style_border_color(qr, lv_color_white(), 0);
     lv_obj_set_style_border_width(qr, 10, 0);
     lv_obj_t *hint = lv_label_create(link);
-    lv_label_set_text(hint, "Scan with your phone for this code's Ross-Tech wiki page. "
-                            "Not every code has one.");
+    lv_label_set_text(hint, "Read on Ross-Tech shows this code's wiki page here (needs Wi-Fi), "
+                            "or scan to open it on your phone. Not every code has a page.");
     lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
     lv_obj_set_flex_grow(hint, 1);
 
+    lv_obj_t *wiki = lv_msgbox_add_footer_button(mbox, "Read on Ross-Tech");
+    lv_obj_add_event_cb(wiki, on_read_wiki, LV_EVENT_CLICKED, (void *)(intptr_t)dtc);
     lv_obj_t *ok = lv_msgbox_add_footer_button(mbox, "Done");
     lv_obj_add_event_cb(ok, on_fault_close, LV_EVENT_CLICKED, mbox);
 }
@@ -1732,6 +2073,8 @@ void gui_build(void)
     build_home();
     build_detail();
     build_dash();
+    build_wifi();
+    build_wiki();
     build_credits();
     update_pill();
     show_car(load_car(), false);
@@ -1772,6 +2115,13 @@ void gui_debug(const char *cmd)
         on_demo(NULL);
     } else if (strcmp(cmd, "credits") == 0) {
         on_credits(NULL);
+    } else if (strcmp(cmd, "wifi") == 0) {
+        on_wifi_open(NULL);
+    } else if (strcmp(cmd, "wifi scan") == 0) {
+        on_wifi_open(NULL);
+        on_wifi_scan(NULL);
+    } else if (strncmp(cmd, "wiki ", 5) == 0) {
+        open_wiki(atoi(cmd + 5));
     } else if (strcmp(cmd, "dash") == 0) {
         on_dash_open(NULL);
     } else if (strcmp(cmd, "dash start") == 0) {

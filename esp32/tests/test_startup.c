@@ -7,7 +7,7 @@ const char labels_csv_start[] asm("_binary_labels_csv_start") = "";
 const char labels_csv_end[] asm("_binary_labels_csv_end") = "";
 
 static bool display_ready, lock_ready;
-static int gui_builds, console_starts, requests, unlocks;
+static int gui_builds, console_starts, requests, unlocks, net_starts;
 static kl_callback_t callback;
 
 int nvs_flash_init(void) { return ESP_OK; }
@@ -19,6 +19,8 @@ void gui_build(void) { gui_builds++; }
 void gui_on_kline_event(const kl_event_t *event) { (void)event; }
 void debug_console_start(void) { console_starts++; }
 void kline_start(kl_callback_t cb) { callback = cb; }
+void gui_on_net_event(const net_event_t *event) { (void)event; }
+void net_start(net_callback_t cb) { (void)cb; net_starts++; }
 bool kline_submit(const kl_request_t *request)
 {
     (void)request;
@@ -30,17 +32,17 @@ static void check_startup(bool display, bool lock)
 {
     display_ready = display;
     lock_ready = lock;
-    gui_builds = console_starts = requests = unlocks = 0;
+    gui_builds = console_starts = requests = unlocks = net_starts = 0;
     callback = NULL;
     app_main();
     assert(callback != NULL);
     assert(requests == 0);
     if (display && lock) {
-        assert(gui_builds == 1 && console_starts == 1 && unlocks == 1);
+        assert(gui_builds == 1 && console_starts == 1 && unlocks == 1 && net_starts == 1);
         assert(callback == gui_on_kline_event);
         return;
     }
-    assert(gui_builds == 0 && console_starts == 0 && unlocks == 0);
+    assert(gui_builds == 0 && console_starts == 0 && unlocks == 0 && net_starts == 0);
     /* Attach, completion and reconnect must never enqueue vehicle operations. */
     callback(&(kl_event_t){ .type = KL_EV_CABLE, .ok = true });
     callback(&(kl_event_t){ .type = KL_EV_DONE, .op = KL_SCAN });
