@@ -1,5 +1,28 @@
 # Handover: ESP32 VAG Scanner (macOS + ESP32-P4)
 
+## Dashboard (2026-10-31)
+
+- `kwcore/dashboard.c` is shared: presets, the read plan (each (address, group) once,
+  grouped by controller), `kw_dash_run` (6 rounds per controller visit; never disconnects
+  when every slot is on one controller), `kw_sensor_number` (numeric twin of
+  `kw_format_sensor`; a test keeps them in agreement), unit conversion, and the fuel
+  estimate (MAF / 14.7 / 745 g/l; gaps over 10 s aren't integrated; calibration factor).
+- Default slots: coolant 01/4/3, battery 01/4/2, ATF 02/5/1 (**unconfirmed** on the real
+  van), fuel economy (01/2 field 4 MAF + 01/5 field 3 speed). Unverified on a real car.
+- Mac: `Dashboard.swift` (model, UserDefaults: slots, units, fuel factor and trip),
+  `DashboardView.swift` (Swift Charts, hover readout). Pin values from Live data.
+  `--demo --dashboard` opens it running.
+- P4: `KL_DASH` request / `KL_EV_DASH` events in `kline_task.c`; dashboard screen in
+  `gui.c` (layout and units in NVS; no calibration UI, trip in RAM only). Tap a Live data
+  value to pin it. Debug console: `dash`, `dash start`, `dash stop`.
+- **LVGL's printf has no `%f`** (`CONFIG_LV_USE_FLOAT` off): `lv_label_set_text_fmt` with
+  `%.1f` crashed the P4 on opening the dashboard. Dashboard code formats via
+  `label_printf` (libc `vsnprintf`). Don't pass floats to LVGL's `_fmt` functions.
+- The simulated EuroVan now has a transmission (02, groups 4/5), engine group 5, and in
+  live mode drives a loop (idle, accelerate, cruise ~96 km/h, coast) while warming up.
+- Verified: protocol tests (14), Mac build and demo run (screenshot), ESP-IDF build,
+  flashed to the P4 and run on the demo car (screenshot via p4shot).
+
 ## Direct module access (2026-10-29)
 
 - Both landing screens always show 01/02/03/08/15/17, plus More modules for the

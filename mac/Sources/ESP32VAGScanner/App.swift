@@ -14,6 +14,7 @@ struct ESP32VAGScannerApp: App {
         WindowGroup("ESP32 VAG Scanner") {
             RootView()
                 .environmentObject(model)
+                .environmentObject(model.dashboard)
                 .frame(minWidth: 980, minHeight: 640)
                 .preferredColorScheme(.dark)
                 .onAppear { NSApp.activate(ignoringOtherApps: true) }
@@ -29,7 +30,10 @@ final class AppModel: ObservableObject {
     }
     @Published var baud = 9600
     @Published var modules: [Module] = []
-    @Published var selection: Module?
+    @Published var selection: Module? {
+        didSet { if selection != nil { showDashboard = false } }
+    }
+    @Published var showDashboard = CommandLine.arguments.contains("--dashboard")
     @Published var scanning = false
     @Published var scanned = false
     @Published var scanStatus = ""
@@ -42,6 +46,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var car: Car
 
     let kline = KLine()
+    let dashboard = Dashboard()
     private var scanStop: StopFlag?
     private var carChosenByHand = false
 
@@ -166,7 +171,7 @@ final class AppModel: ObservableObject {
                     }
                     scanStatus = "\(modules.count) controllers found"
                 }
-                if autoDemo && !stayOnOverview { selection = modules.first }
+                if autoDemo && !stayOnOverview && !showDashboard { selection = modules.first }
             } catch {
                 self.error = error.localizedDescription
                 scanStatus = ""
@@ -189,7 +194,9 @@ struct RootView: View {
                 .navigationSplitViewColumnWidth(min: 280, ideal: 300)
         } detail: {
             Group {
-                if let module = model.selection {
+                if model.showDashboard {
+                    DashboardView()
+                } else if let module = model.selection {
                     ModuleView(module: module).id(module.address)
                 } else {
                     OverviewView()
@@ -209,11 +216,21 @@ struct Sidebar: View {
             Section {
                 Button {
                     model.selection = nil
+                    model.showDashboard = false
                 } label: {
                     Label("Overview", systemImage: "car.side")
                 }
                 .buttonStyle(.plain)
                 .padding(.vertical, 4)
+                Button {
+                    model.selection = nil
+                    model.showDashboard = true
+                } label: {
+                    Label("Dashboard", systemImage: "gauge.with.dots.needle.67percent")
+                }
+                .buttonStyle(.plain)
+                .padding(.vertical, 4)
+                .disabled(model.busy && !model.dashboard.running)
             }
             if !model.modules.isEmpty {
                 Section("Controllers") {

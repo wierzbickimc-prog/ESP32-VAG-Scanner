@@ -8,6 +8,7 @@
  *   open <n>          open and read the n-th card
  *   faults | live     read faults / toggle live data on the open controller
  *   plus | minus      step the measuring group
+ *   dash [start|stop] open the dashboard, and start or stop reading
  *   back | home | credits | chooser
  */
 #include "debug_console.h"

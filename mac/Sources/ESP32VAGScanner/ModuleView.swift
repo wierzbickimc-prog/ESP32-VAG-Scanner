@@ -5,6 +5,7 @@ struct ModuleView: View {
     let module: Module
     private var currentModule: Module { model.modules.first { $0.address == module.address } ?? module }
     @EnvironmentObject var model: AppModel
+    @EnvironmentObject var dash: Dashboard
 
     private enum Tab { case faults, live }
     @State private var tab = Tab.faults
@@ -174,10 +175,14 @@ struct ModuleView: View {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 14)], spacing: 14) {
                 ForEach(values.indices, id: \.self) { i in
                     VStack(alignment: .leading, spacing: 14) {
-                        Text("\(i + 1) · \(values[i].label)")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Color.textMuted)
-                            .lineLimit(1)
+                        HStack {
+                            Text("\(i + 1) · \(values[i].label)")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Color.textMuted)
+                                .lineLimit(1)
+                            Spacer()
+                            pinMenu(field: i + 1, label: values[i].label)
+                        }
                         Text(values[i].value)
                             .font(.system(size: 30, weight: .semibold, design: .rounded).monospacedDigit())
                             .foregroundStyle(Color.textPrimary)
@@ -188,6 +193,27 @@ struct ModuleView: View {
                 }
             }
         }
+    }
+
+    /// Puts this field in a dashboard slot.
+    private func pinMenu(field: Int, label: String) -> some View {
+        Menu {
+            Section("Show on dashboard") {
+                ForEach(dash.slots.indices, id: \.self) { slot in
+                    let current = dash.slots[slot]
+                    Button("Slot \(slot + 1)" + (current.kind == .empty ? "" : " (replaces \(current.name))")) {
+                        dash.set(DashSlot(kind: .sensor, address: module.address, group: group, field: field,
+                                          name: label), at: slot)
+                        groupStatus = "Field \(field) is on dashboard slot \(slot + 1)"
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "pin")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Show this value on the dashboard")
     }
 
     // MARK: Actions

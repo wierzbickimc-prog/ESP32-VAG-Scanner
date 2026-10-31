@@ -41,6 +41,7 @@ typedef struct FakeEcu {
     /* results for tests */
     int errors;
     int saw_end;
+    int wakes;                /* controllers woken */
 
     /* internals */
     int edges;
@@ -60,11 +61,12 @@ typedef struct FakeEcu {
     int have_counter;
     int extra_pending;
     unsigned tick;
+    unsigned drive;           /* drive-cycle step (live mode) */
 } FakeEcu;
 
 typedef enum {
     FAKE_CAR_GOLF4,     /* engine 01, cluster 17, central convenience 46, KWP2000 airbag 15 */
-    FAKE_CAR_EUROVAN,   /* 2002 EuroVan: engine, ABS, HVAC, cluster */
+    FAKE_CAR_EUROVAN,   /* 2002 EuroVan: engine, transmission, ABS, HVAC, cluster */
     FAKE_CAR_HARLEQUIN, /* 1996 Golf Mk3: engine, ABS, airbag */
 } FakeCar;
 

@@ -150,6 +150,39 @@ final class KLine: @unchecked Sendable {
         }
     }
 
+    /// Reads the dashboard's groups round and round (kwcore/dashboard.c) until `stop` is set.
+    func runDashboard(port: String, baud: Int, plan: [KwDashRead], stop: StopFlag,
+                      onReading: @escaping @Sendable (DashReading) -> Void) async throws {
+        final class Context {
+            let stop: StopFlag
+            let demo: Bool
+            let onReading: @Sendable (DashReading) -> Void
+            init(stop: StopFlag, demo: Bool, onReading: @escaping @Sendable (DashReading) -> Void) {
+                self.stop = stop
+                self.demo = demo
+                self.onReading = onReading
+            }
+        }
+        try await run {
+            try self.ensureOpen(port: port, baud: baud)
+            let context = Unmanaged.passRetained(Context(stop: stop, demo: Self.isDemo(port), onReading: onReading))
+            defer { context.release() }
+            plan.withUnsafeBufferPointer { buf in
+                kw_dash_run(self.session, self.io, buf.baseAddress, Int32(buf.count), 6, { ctx, r in
+                    let context = Unmanaged<Context>.fromOpaque(ctx!).takeUnretainedValue()
+                    let r = r!.pointee
+                    context.onReading(DashReading(
+                        address: Int(r.address), group: Int(r.group), err: r.err,
+                        values: (0..<Int(r.count)).map { r.values[$0] },
+                        ident: r.ident.map { String(cString: $0) } ?? ""))
+                    // the simulated car answers instantly; pace it like a real bus
+                    if context.demo { Thread.sleep(forTimeInterval: 0.12) }
+                    return context.stop.isStopped ? 1 : 0
+                }, context.toOpaque())
+            }
+        }
+    }
+
     func close() {
         queue.async { self.closePort() }
     }

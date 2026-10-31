@@ -31,6 +31,12 @@ Click a fault for everything the controller stores about it:
 |---|---|
 | <img src="docs/screenshots/p4_home.png" alt="P4 home screen after a scan" width="320"> | <img src="docs/screenshots/p4_faults.png" alt="P4 fault code list" width="320"> |
 
+### Dashboard
+
+| macOS | ESP32-P4 |
+|---|---|
+| <img src="docs/screenshots/mac_dashboard.png" alt="Mac dashboard with coolant, battery, ATF temperature and fuel economy trends" width="560"> | <img src="docs/screenshots/p4_dashboard.png" alt="P4 dashboard with four live slots" width="240"> |
+
 All screenshots show the simulated EuroVan (demo mode).
 
 ## Features
@@ -44,6 +50,13 @@ All screenshots show the simulated EuroVan (demo mode).
 - Fault codes with descriptions, OBD-II P-codes, the fault type ("Short to Ground") and the
   intermittent flag. Clearing asks for confirmation first.
 - Live measuring blocks, with standard VW labels where known.
+- A **four-slot dashboard** with live values and trend charts. The EuroVan default shows
+  coolant temperature, battery voltage, ATF temperature and fuel economy. Each slot can show
+  a preset, or any field you pin from a controller's Live data (the pin button on the Mac;
+  tap the value on the P4). US or metric units.
+- **Fuel economy** estimated from the engine's air mass and vehicle speed (VW standard groups
+  2 and 5, assuming a stoichiometric mixture), with instant and trip average. On the Mac,
+  **Calibrate** scales the estimate to match the fuel actually pumped at a fill-up.
 - Recognises a few specific cars from their part numbers (T4 EuroVan, Mk3 Golf) and shows a
   matching photo.
 - Demo mode with simulated cars, so you can try it without a car or cable.
@@ -57,6 +70,14 @@ than a clean fault result. Not every car has every controller. Addresses use hex
 notation (for example, **17** means instruments).
 
 <img src="docs/screenshots/mac_direct_modules.png" alt="macOS landing screen with six module shortcuts available before scanning" width="800">
+
+**Dashboard notes.** KW1281 talks to one controller at a time, and switching costs a 2–3 s
+wake-up. The dashboard reads each controller several times before switching, so slots on
+the engine update continuously while the transmission's ATF temperature updates every few
+seconds. The ATF preset uses **02, group 5, field 1** (Ross-Tech's general location; some
+transmissions use group 2 or 4). It has not been checked on a real EuroVan yet: open
+**02 Auto Trans → Live data**, find the temperature, and pin it to the slot if it differs.
+The fuel estimate can't see overrun fuel cut-off, so calibrate it after a fill-up.
 
 KW1281 controllers store only a fault code and one status byte. There's no mileage,
 occurrence count or freeze-frame data; that arrived with KWP2000 and UDS, which this tool
@@ -103,6 +124,7 @@ cd mac
 swift run ESP32VAGScanner                   # pick the cable in the app
 swift run ESP32VAGScanner --demo            # straight into the simulated EuroVan
 swift run ESP32VAGScanner --demo=golf --overview
+swift run ESP32VAGScanner --demo --dashboard  # simulated EuroVan, dashboard running
 ```
 
 Direct-module integration tests use the simulated cars and require Xcode's XCTest framework:
@@ -120,7 +142,7 @@ idf.py build
 idf.py -p /dev/cu.usbserial-XXXX flash monitor   # the board's CH340 port
 ```
 
-On the P4, hold **Scan** to open the demo cars.
+On the P4, hold **Scan** to open the demo cars. **Dashboard** sits between Scan and Demo.
 
 ## Optional data (not in this repo)
 

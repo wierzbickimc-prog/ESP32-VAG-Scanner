@@ -2,15 +2,19 @@
  * LVGL 9 UI for the 800x1280 portrait panel. Dark theme; the detected car's
  * photo fills the top of the home screen, controllers sit in a card grid
  * below, and each controller opens a detail screen with Faults / Live data.
+ * The dashboard screen shows four live values with trends (kwcore/dashboard.c).
  */
 #include "gui.h"
 
+#include <math.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "assets.h"
 #include "board_display.h"
 #include "car_profile.h"
+#include "esp_timer.h"
 #include "fault_table.h"
 #include "labels.h"
 #include "lvgl.h"
@@ -280,6 +284,8 @@ static void set_card_status(module_t *m)
 }
 
 static void open_module_index(int idx);
+static void on_dash_open(lv_event_t *e);
+static void on_value_tile(lv_event_t *e);
 
 static void on_card(lv_event_t *e)
 {
@@ -555,15 +561,20 @@ static void build_home(void)
     /* scan, and demo beside it */
     lv_obj_t *scan = button(s_home, NULL, C_ACCENT, C_TEXT, on_scan, NULL);
     lv_obj_add_event_cb(scan, on_scan_hold, LV_EVENT_LONG_PRESSED, NULL);
-    lv_obj_set_size(scan, 540, 80);
+    lv_obj_set_size(scan, 344, 80);
     lv_obj_set_pos(scan, 32, 426);
     lv_obj_set_style_radius(scan, 24, 0);
     s_scan_label = text(scan, &lv_font_montserrat_28, C_TEXT, LV_SYMBOL_REFRESH "  Scan car");
     lv_obj_center(s_scan_label);
 
+    lv_obj_t *dash = button(s_home, LV_SYMBOL_EYE_OPEN "  Dashboard", C_SURFACE, C_TEXT, on_dash_open, NULL);
+    lv_obj_set_size(dash, 196, 80);
+    lv_obj_set_pos(dash, 384, 426);
+    lv_obj_set_style_radius(dash, 24, 0);
+
     lv_obj_t *demo = button(s_home, LV_SYMBOL_PLAY "  Demo", C_SURFACE, C_WARN, on_demo, NULL);
-    lv_obj_set_size(demo, 180, 80);
-    lv_obj_set_pos(demo, 588, 426);
+    lv_obj_set_size(demo, 172, 80);
+    lv_obj_set_pos(demo, 596, 426);
     lv_obj_set_style_radius(demo, 24, 0);
     lv_obj_set_style_border_color(demo, col(C_WARN), 0);
     lv_obj_set_style_border_width(demo, 2, 0);
@@ -858,6 +869,8 @@ static void build_detail(void)
         lv_obj_set_width(s_value_labels[i], 320);
         lv_label_set_long_mode(s_value_labels[i], LV_LABEL_LONG_DOT);
         s_value_tiles[i] = tile;
+        lv_obj_set_clickable(tile, true);
+        lv_obj_add_event_cb(tile, on_value_tile, LV_EVENT_CLICKED, (void *)(intptr_t)i);
         lv_obj_set_hidden(tile, true);
     }
     show_tab(false);
@@ -888,6 +901,551 @@ static void open_module_index(int idx)
     show_tab(false);
     lv_screen_load_anim(s_detail, LV_SCREEN_LOAD_ANIM_MOVE_LEFT, 220, 0, false);
     read_faults();
+}
+
+/* ---- dashboard -------------------------------------------------------------- */
+
+/*
+ * Four slots from kwcore/dashboard.c, each a live value with its trend. The
+ * layout, units and fuel calibration factor live in NVS.
+ */
+
+#define DASH_POINTS 120
+
+typedef struct {
+    lv_obj_t *name, *source, *value, *unit, *footer, *chart, *top, *bottom, *reset;
+    lv_chart_series_t *series;
+    float hist[DASH_POINTS];     /* metric; fuel slots hold l/100km */
+    int hist_n;
+    const char *metric_unit;     /* static string from kw_sensor_number */
+    char text[32];               /* non-numeric fields */
+    char label[32];
+    char error[80];
+    bool have;
+} dash_tile_t;
+
+static lv_obj_t *s_dash, *s_dash_status, *s_dash_run_label, *s_dash_units_label;
+static dash_tile_t s_dt[KW_DASH_SLOTS];
+static KwDashLayout s_layout;
+static KwFuel s_fuel;
+static bool s_imperial = true;
+static bool s_dash_running, s_dash_restart;
+static int s_pick_slot;
+static int s_pin_field;
+static char s_value_label_text[MAX_VALUES][32];
+
+/* LVGL's own printf has no %f: format numbers with libc, then set the text. */
+static void label_printf(lv_obj_t *label, const char *fmt, ...)
+{
+    char buf[128];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    lv_label_set_text(label, buf);
+}
+
+static void dash_save(void)
+{
+    nvs_handle_t h;
+    if (nvs_open("vagscanner", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_blob(h, "dash", &s_layout, sizeof(s_layout));
+        nvs_set_u8(h, "imperial", s_imperial);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+}
+
+static void dash_load(void)
+{
+    nvs_handle_t h;
+    size_t len = sizeof(s_layout);
+    uint8_t imperial = 1;
+    kw_dash_default(&s_layout);
+    if (nvs_open("vagscanner", NVS_READONLY, &h) == ESP_OK) {
+        if (nvs_get_blob(h, "dash", &s_layout, &len) != ESP_OK || len != sizeof(s_layout))
+            kw_dash_default(&s_layout);
+        nvs_get_u8(h, "imperial", &imperial);
+        nvs_close(h);
+    }
+    s_imperial = imperial;
+    kw_fuel_init(&s_fuel, 1.0);
+}
+
+static const char *dash_fmt(double v, const char *unit)
+{
+    static char buf[24];
+    const char *f = "%.1f";
+    if (!strcmp(unit, "rpm") || !strcmp(unit, "km") || !strcmp(unit, "mi"))
+        f = "%.0f";
+    else if (!strcmp(unit, "V") || !strcmp(unit, "bar") || !strcmp(unit, "ms") || !strcmp(unit, "g/s"))
+        f = "%.2f";
+    snprintf(buf, sizeof(buf), f, v);
+    return buf;
+}
+
+/* Coasting reads near-infinite: top out at 99.9 mpg (2.4 l/100km) like a trip computer. */
+static double dash_economy(double l_per_100km)
+{
+    double l = l_per_100km < 235.214583 / 99.9 ? 235.214583 / 99.9 : l_per_100km;
+    return s_imperial ? 235.214583 / l : l;
+}
+
+static double dash_shown(const KwDashSlot *slot, const dash_tile_t *t, double v, const char **unit)
+{
+    if (slot->kind == KW_SLOT_FUEL) {
+        *unit = s_imperial ? "mpg" : "l/100km";
+        return dash_economy(v);
+    }
+    return kw_unit_convert(v, t->metric_unit ? t->metric_unit : "", s_imperial, unit);
+}
+
+static const char *dash_note(const KwDashSlot *slot)
+{
+    for (int i = 0; kw_dash_preset(i); i++) {
+        const KwDashPreset *p = kw_dash_preset(i);
+        if (p->note && p->kind == slot->kind && p->address == slot->address && p->group == slot->group
+            && p->field == slot->field)
+            return p->note;
+    }
+    return NULL;
+}
+
+static void dash_redraw_chart(int i)
+{
+    dash_tile_t *t = &s_dt[i];
+    const KwDashSlot *slot = &s_layout.slot[i];
+    const char *unit = "";
+    double lo = 0, hi = 0;
+    for (int k = 0; k < t->hist_n; k++) {
+        double v = dash_shown(slot, t, t->hist[k], &unit);
+        if (k == 0 || v < lo)
+            lo = v;
+        if (k == 0 || v > hi)
+            hi = v;
+    }
+    /* widen the range so sensor noise doesn't fill the chart */
+    double minimum = !strcmp(unit, "V") ? 2 : (!strcmp(unit, "°C") || !strcmp(unit, "°F")) ? 20
+                   : (!strcmp(unit, "mpg") || !strcmp(unit, "l/100km")) ? 10 : !strcmp(unit, "rpm") ? 500
+                   : (fabs(hi) * 0.1 > 1 ? fabs(hi) * 0.1 : 1);
+    double span = (hi - lo > minimum ? hi - lo : minimum) * 1.1, mid = (lo + hi) / 2;
+    lo = mid - span / 2;
+    hi = mid + span / 2;
+    lv_chart_set_axis_range(t->chart, LV_CHART_AXIS_PRIMARY_Y, (int32_t)(lo * 10), (int32_t)(hi * 10));
+    lv_chart_set_all_values(t->chart, t->series, LV_CHART_POINT_NONE);
+    int first = DASH_POINTS - t->hist_n;
+    for (int k = 0; k < t->hist_n; k++)
+        lv_chart_set_series_value_by_id(t->chart, t->series, first + k,
+                                        (int32_t)(dash_shown(slot, t, t->hist[k], &unit) * 10));
+    lv_chart_refresh(t->chart);
+    if (t->hist_n) {
+        lv_label_set_text(t->top, dash_fmt(hi, unit));
+        lv_label_set_text(t->bottom, dash_fmt(lo, unit));
+    } else {
+        lv_label_set_text(t->top, "");
+        lv_label_set_text(t->bottom, "");
+    }
+}
+
+static void dash_refresh_tile(int i)
+{
+    dash_tile_t *t = &s_dt[i];
+    const KwDashSlot *slot = &s_layout.slot[i];
+    const char *unit = "";
+
+    lv_obj_set_hidden(t->reset, slot->kind != KW_SLOT_FUEL);
+    switch (slot->kind) {
+    case KW_SLOT_EMPTY:
+        lv_label_set_text(t->name, "Empty slot");
+        lv_label_set_text(t->source, "Tap " LV_SYMBOL_SETTINGS " to choose a value");
+        lv_label_set_text(t->value, "");
+        lv_label_set_text(t->unit, "");
+        lv_label_set_text(t->footer, "");
+        break;
+    case KW_SLOT_SENSOR:
+        lv_label_set_text(t->name, slot->name);
+        if (t->label[0] && strcmp(t->label, slot->name))
+            label_printf(t->source, "%02X  " LV_SYMBOL_BULLET "  Group %d  " LV_SYMBOL_BULLET "  Field %d  "
+                                  LV_SYMBOL_BULLET "  %s", slot->address, slot->group, slot->field, t->label);
+        else
+            label_printf(t->source, "%02X  " LV_SYMBOL_BULLET "  Group %d  " LV_SYMBOL_BULLET "  Field %d",
+                                  slot->address, slot->group, slot->field);
+        if (t->have && t->hist_n) {
+            double v = dash_shown(slot, t, t->hist[t->hist_n - 1], &unit);
+            lv_label_set_text(t->value, dash_fmt(v, unit));
+            lv_label_set_text(t->unit, unit);
+        } else {
+            lv_label_set_text(t->value, t->text[0] ? t->text : "--");
+            lv_label_set_text(t->unit, "");
+        }
+        if (t->error[0]) {
+            lv_obj_set_style_text_color(t->footer, col(C_WARN), 0);
+            label_printf(t->footer, LV_SYMBOL_WARNING "  %s", t->error);
+        } else {
+            lv_obj_set_style_text_color(t->footer, col(C_MUTED), 0);
+            const char *note = dash_note(slot);
+            lv_label_set_text(t->footer, note ? note : "");
+        }
+        break;
+    case KW_SLOT_FUEL: {
+        lv_label_set_text(t->name, slot->name);
+        label_printf(t->source, "%02X  " LV_SYMBOL_BULLET "  Groups %d + %d  " LV_SYMBOL_BULLET
+                              "  estimated from air mass and speed", KW_FUEL_ADDRESS, KW_FUEL_MAF_GROUP,
+                              KW_FUEL_SPEED_GROUP);
+        double instant = kw_fuel_instant(&s_fuel);
+        if (instant > 0) {
+            label_printf(t->value, "%.1f", dash_economy(instant));
+            lv_label_set_text(t->unit, s_imperial ? "mpg" : "l/100km");
+        } else if (s_fuel.have_maf) {
+            double flow = kw_unit_convert(s_fuel.flow_lph, "l/h", s_imperial, &unit);
+            label_printf(t->value, "%.2f", flow);
+            label_printf(t->unit, "%s  idle", unit);
+        } else {
+            lv_label_set_text(t->value, "--");
+            lv_label_set_text(t->unit, s_imperial ? "mpg" : "l/100km");
+        }
+        if (t->error[0]) {
+            lv_obj_set_style_text_color(t->footer, col(C_WARN), 0);
+            label_printf(t->footer, LV_SYMBOL_WARNING "  %s", t->error);
+        } else {
+            const char *du, *vu;
+            double dist = kw_unit_convert(s_fuel.trip_km, "km", s_imperial, &du);
+            double used = kw_unit_convert(s_fuel.trip_l, "l", s_imperial, &vu);
+            double avg = kw_fuel_average(&s_fuel);
+            char avg_text[24] = "--";
+            if (avg > 0)
+                snprintf(avg_text, sizeof(avg_text), "%.1f %s", dash_economy(avg), s_imperial ? "mpg" : "l/100km");
+            lv_obj_set_style_text_color(t->footer, col(C_MUTED), 0);
+            label_printf(t->footer, "Trip %s  " LV_SYMBOL_BULLET "  %.1f %s  " LV_SYMBOL_BULLET "  %.2f %s",
+                                  avg_text, dist, du, used, vu);
+        }
+        break;
+    }
+    }
+    dash_redraw_chart(i);
+}
+
+static void dash_push(dash_tile_t *t, double v)
+{
+    if (t->hist_n == DASH_POINTS) {
+        memmove(t->hist, t->hist + 1, sizeof(t->hist[0]) * (DASH_POINTS - 1));
+        t->hist_n--;
+    }
+    t->hist[t->hist_n++] = (float)v;
+}
+
+static void dash_describe(char *out, size_t len, int err, uint8_t address, int group)
+{
+    if (err == KW_ENOWAKE)
+        snprintf(out, len, "No response from %02X. Retrying.", address);
+    else if (err == KW_ENAK)
+        snprintf(out, len, "%02X has no group %d. Pick another in Live data.", address, group);
+    else if (err == KW_EKWP2000)
+        snprintf(out, len, "%02X uses KWP2000, which isn't supported.", address);
+    else
+        snprintf(out, len, "%s", kw_strerror(err));
+}
+
+static void dash_apply(const kl_event_t *ev)
+{
+    if (ev->address == 0) { /* no cable */
+        lv_label_set_text(s_dash_status, "No cable. Plug in the KKL cable, or start a demo car first.");
+        return;
+    }
+    lv_label_set_text(s_dash_status, s_demo ? "Live  " LV_SYMBOL_BULLET "  demo car" : "Live");
+    double t_s = esp_timer_get_time() / 1e6;
+    if (ev->ok && ev->address == KW_FUEL_ADDRESS) {
+        double v;
+        if (ev->group == KW_FUEL_MAF_GROUP && ev->count >= KW_FUEL_MAF_FIELD
+            && kw_sensor_number(&ev->sensors[KW_FUEL_MAF_FIELD - 1], &v, NULL))
+            kw_fuel_maf(&s_fuel, v, t_s);
+        if (ev->group == KW_FUEL_SPEED_GROUP && ev->count >= KW_FUEL_SPEED_FIELD
+            && kw_sensor_number(&ev->sensors[KW_FUEL_SPEED_FIELD - 1], &v, NULL))
+            kw_fuel_speed(&s_fuel, v, t_s);
+    }
+
+    for (int i = 0; i < KW_DASH_SLOTS; i++) {
+        const KwDashSlot *slot = &s_layout.slot[i];
+        dash_tile_t *t = &s_dt[i];
+        if (slot->kind == KW_SLOT_SENSOR) {
+            if (slot->address != ev->address || slot->group != ev->group)
+                continue;
+            if (!ev->ok) {
+                dash_describe(t->error, sizeof(t->error), ev->err, ev->address, ev->group);
+            } else if (slot->field > ev->count) {
+                snprintf(t->error, sizeof(t->error), "Group %d has only %d fields.", slot->group, ev->count);
+            } else {
+                const SensorValue *sv = &ev->sensors[slot->field - 1];
+                double v;
+                t->error[0] = '\0';
+                snprintf(t->label, sizeof(t->label), "%s", kw_label(ev->ident, slot->group, slot->field, sv->sensor_id));
+                if (kw_sensor_number(sv, &v, &t->metric_unit)) {
+                    t->have = true;
+                    t->text[0] = '\0';
+                    dash_push(t, v);
+                } else {
+                    t->have = false;
+                    kw_format_sensor(sv, t->text, sizeof(t->text));
+                }
+            }
+        } else if (slot->kind == KW_SLOT_FUEL) {
+            if (ev->address != KW_FUEL_ADDRESS
+                || (ev->group != KW_FUEL_MAF_GROUP && ev->group != KW_FUEL_SPEED_GROUP))
+                continue;
+            if (!ev->ok) {
+                dash_describe(t->error, sizeof(t->error), ev->err, ev->address, ev->group);
+            } else {
+                t->error[0] = '\0';
+                double instant = kw_fuel_instant(&s_fuel);
+                if (instant > 0 && ev->group == KW_FUEL_SPEED_GROUP)
+                    dash_push(t, instant);
+            }
+        } else {
+            continue;
+        }
+        dash_refresh_tile(i);
+    }
+}
+
+static void dash_set_running(bool running)
+{
+    s_dash_running = running;
+    lv_label_set_text(s_dash_run_label, running ? LV_SYMBOL_STOP "  Stop" : LV_SYMBOL_PLAY "  Start");
+}
+
+static void dash_start(void)
+{
+    if (s_busy || s_dash_running)
+        return;
+    kl_request_t req = { .op = KL_DASH };
+    req.plan_count = kw_dash_plan(&s_layout, req.plan, KW_DASH_PLAN_MAX);
+    if (req.plan_count == 0) {
+        lv_label_set_text(s_dash_status, "Choose something to show first.");
+        return;
+    }
+    if (!s_cable && !s_demo) {
+        lv_label_set_text(s_dash_status, "No cable. Plug in the KKL cable, or start a demo car first.");
+        return;
+    }
+    if (!kline_submit(&req))
+        return;
+    s_busy = true;
+    dash_set_running(true);
+    lv_label_set_text(s_dash_status, "Connecting...");
+}
+
+static void on_dash_run(lv_event_t *e)
+{
+    (void)e;
+    if (s_dash_running) {
+        s_dash_restart = false;
+        kline_cancel();
+    } else {
+        dash_start();
+    }
+}
+
+static void on_dash_units(lv_event_t *e)
+{
+    (void)e;
+    s_imperial = !s_imperial;
+    lv_label_set_text(s_dash_units_label, s_imperial ? "US" : "Metric");
+    dash_save();
+    for (int i = 0; i < KW_DASH_SLOTS; i++)
+        dash_refresh_tile(i);
+}
+
+static void on_dash_back(lv_event_t *e)
+{
+    if (s_dash_running) {
+        s_dash_restart = false;
+        kline_cancel();
+    }
+    go_home(e);
+}
+
+static void on_dash_open(lv_event_t *e)
+{
+    (void)e;
+    if (s_busy && !s_dash_running)
+        return;
+    for (int i = 0; i < KW_DASH_SLOTS; i++)
+        dash_refresh_tile(i);
+    lv_screen_load_anim(s_dash, LV_SCREEN_LOAD_ANIM_MOVE_LEFT, 220, 0, false);
+}
+
+/* Puts `slot` in place `i`; a running dashboard restarts on the new plan. */
+static void dash_set_slot(int i, const KwDashSlot *slot)
+{
+    s_layout.slot[i] = *slot;
+    memset(&s_dt[i].hist, 0, sizeof(s_dt[i].hist));
+    s_dt[i].hist_n = 0;
+    s_dt[i].have = false;
+    s_dt[i].text[0] = s_dt[i].label[0] = s_dt[i].error[0] = '\0';
+    dash_save();
+    dash_refresh_tile(i);
+    if (s_dash_running) {
+        s_dash_restart = true;
+        kline_cancel();
+    }
+}
+
+static void on_preset_pick(lv_event_t *e)
+{
+    lv_obj_t *mbox = lv_obj_get_parent(lv_obj_get_parent(lv_event_get_target(e)));
+    int p = (int)(intptr_t)lv_event_get_user_data(e);
+    KwDashSlot slot = { 0 };
+    if (p >= 0)
+        kw_dash_slot_from_preset(&slot, kw_dash_preset(p));
+    lv_msgbox_close_async(mbox);
+    dash_set_slot(s_pick_slot, &slot);
+}
+
+static void on_slot_settings(lv_event_t *e)
+{
+    s_pick_slot = (int)(intptr_t)lv_event_get_user_data(e);
+    lv_obj_t *mbox = lv_msgbox_create(NULL);
+    lv_obj_set_width(mbox, 640);
+    lv_msgbox_add_title(mbox, "Show in this slot");
+    lv_obj_t *content = lv_msgbox_get_content(mbox);
+    lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(content, 8, 0);
+    text(content, &lv_font_montserrat_16, C_MUTED,
+         "EuroVan presets (VW standard groups). For any other value, open a "
+         "controller's Live data and tap the value.");
+    for (int i = 0; kw_dash_preset(i); i++) {
+        lv_obj_t *b = button(content, kw_dash_preset(i)->name, C_SURFACE2, C_TEXT, NULL, NULL);
+        lv_obj_set_size(b, LV_PCT(100), 60);
+        lv_obj_set_style_radius(b, 14, 0);
+        lv_obj_add_event_cb(b, on_preset_pick, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+    }
+    lv_obj_t *clear = button(content, "Clear slot", C_SURFACE2, C_ERR, NULL, NULL);
+    lv_obj_set_size(clear, LV_PCT(100), 60);
+    lv_obj_set_style_radius(clear, 14, 0);
+    lv_obj_add_event_cb(clear, on_preset_pick, LV_EVENT_CLICKED, (void *)(intptr_t)-1);
+    lv_msgbox_add_close_button(mbox);
+}
+
+static void on_reset_trip(lv_event_t *e)
+{
+    (void)e;
+    kw_fuel_reset_trip(&s_fuel);
+    for (int i = 0; i < KW_DASH_SLOTS; i++)
+        if (s_layout.slot[i].kind == KW_SLOT_FUEL)
+            dash_refresh_tile(i);
+}
+
+/* Live data: tap a value to put it on the dashboard. */
+static void on_pin_slot(lv_event_t *e)
+{
+    lv_obj_t *mbox = lv_obj_get_parent(lv_obj_get_parent(lv_event_get_target(e)));
+    int i = (int)(intptr_t)lv_event_get_user_data(e);
+    lv_msgbox_close_async(mbox);
+    if (s_current < 0)
+        return;
+    KwDashSlot slot = { .kind = KW_SLOT_SENSOR, .address = s_modules[s_current].address,
+                        .group = (uint8_t)s_group, .field = (uint8_t)(s_pin_field + 1) };
+    snprintf(slot.name, sizeof(slot.name), "%s", s_value_label_text[s_pin_field]);
+    dash_set_slot(i, &slot);
+    label_printf(s_group_status, "Field %d is on dashboard slot %d", s_pin_field + 1, i + 1);
+}
+
+static void on_value_tile(lv_event_t *e)
+{
+    s_pin_field = (int)(intptr_t)lv_event_get_user_data(e);
+    lv_obj_t *mbox = lv_msgbox_create(NULL);
+    lv_obj_set_width(mbox, 640);
+    lv_msgbox_add_title(mbox, "Show on dashboard");
+    lv_msgbox_add_text(mbox, s_value_label_text[s_pin_field]);
+    for (int i = 0; i < KW_DASH_SLOTS; i++) {
+        char label[12];
+        snprintf(label, sizeof(label), "Slot %d", i + 1);
+        lv_obj_t *b = lv_msgbox_add_footer_button(mbox, label);
+        lv_obj_add_event_cb(b, on_pin_slot, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+    }
+    lv_msgbox_add_close_button(mbox);
+}
+
+static void build_dash(void)
+{
+    s_dash = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_dash, col(C_BG), 0);
+    lv_obj_set_scrollable(s_dash, false);
+
+    lv_obj_t *back = round_button(s_dash, LV_SYMBOL_LEFT, on_dash_back);
+    lv_obj_set_style_bg_color(back, col(C_SURFACE), 0);
+    lv_obj_set_style_bg_opa(back, LV_OPA_COVER, 0);
+    lv_obj_set_pos(back, 24, 24);
+    lv_obj_t *title = text(s_dash, &lv_font_montserrat_36, C_TEXT, "Dashboard");
+    lv_obj_set_pos(title, 108, 32);
+
+    lv_obj_t *units = button(s_dash, NULL, C_SURFACE, C_TEXT, on_dash_units, NULL);
+    lv_obj_set_size(units, 130, 64);
+    lv_obj_set_pos(units, 438, 24);
+    s_dash_units_label = text(units, &lv_font_montserrat_20, C_TEXT, s_imperial ? "US" : "Metric");
+    lv_obj_center(s_dash_units_label);
+    lv_obj_t *run = button(s_dash, NULL, C_ACCENT, C_TEXT, on_dash_run, NULL);
+    lv_obj_set_size(run, 184, 64);
+    lv_obj_set_pos(run, 584, 24);
+    s_dash_run_label = text(run, &lv_font_montserrat_24, C_TEXT, "");
+    lv_obj_center(s_dash_run_label);
+
+    s_dash_status = text(s_dash, &lv_font_montserrat_16, C_MUTED, "Choose a value for each slot, then Start.");
+    lv_obj_set_pos(s_dash_status, 34, 104);
+
+    for (int i = 0; i < KW_DASH_SLOTS; i++) {
+        dash_tile_t *t = &s_dt[i];
+        lv_obj_t *tile = surface(s_dash, C_SURFACE, 20);
+        lv_obj_set_size(tile, 736, 266);
+        lv_obj_set_pos(tile, 32, 136 + i * (266 + 14));
+        lv_obj_set_style_pad_all(tile, 18, 0);
+
+        t->name = text(tile, &lv_font_montserrat_24, C_TEXT, "");
+        t->source = text(tile, &lv_font_montserrat_16, C_MUTED, "");
+        lv_obj_set_pos(t->source, 0, 32);
+        lv_obj_set_width(t->source, 620);
+        lv_label_set_long_mode(t->source, LV_LABEL_LONG_DOT);
+        lv_obj_t *cfg = button(tile, LV_SYMBOL_SETTINGS, C_SURFACE2, C_MUTED, on_slot_settings, (void *)(intptr_t)i);
+        lv_obj_set_size(cfg, 64, 56);
+        lv_obj_set_style_radius(cfg, 14, 0);
+        lv_obj_align(cfg, LV_ALIGN_TOP_RIGHT, 0, -4);
+
+        /* value on the left, trend on the right */
+        t->value = text(tile, &lv_font_montserrat_48, C_TEXT, "");
+        lv_obj_set_pos(t->value, 0, 72);
+        t->unit = text(tile, &lv_font_montserrat_20, C_MUTED, "");
+        lv_obj_set_pos(t->unit, 2, 132);
+
+        t->chart = lv_chart_create(tile);
+        lv_obj_set_size(t->chart, 400, 128);
+        lv_obj_set_pos(t->chart, 230, 66);
+        lv_chart_set_type(t->chart, LV_CHART_TYPE_LINE);
+        lv_chart_set_point_count(t->chart, DASH_POINTS);
+        lv_chart_set_div_line_count(t->chart, 3, 0);
+        lv_obj_set_style_bg_opa(t->chart, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(t->chart, 0, 0);
+        lv_obj_set_style_pad_all(t->chart, 0, 0);
+        lv_obj_set_style_line_color(t->chart, col(C_MUTED), LV_PART_MAIN);
+        lv_obj_set_style_line_opa(t->chart, LV_OPA_20, LV_PART_MAIN);
+        lv_obj_set_style_line_width(t->chart, 2, LV_PART_ITEMS);
+        lv_obj_set_style_width(t->chart, 0, LV_PART_INDICATOR);
+        lv_obj_set_style_height(t->chart, 0, LV_PART_INDICATOR);
+        t->series = lv_chart_add_series(t->chart, col(C_ACCENT), LV_CHART_AXIS_PRIMARY_Y);
+        t->top = text(tile, &lv_font_montserrat_16, C_MUTED, "");
+        lv_obj_set_pos(t->top, 642, 62);
+        t->bottom = text(tile, &lv_font_montserrat_16, C_MUTED, "");
+        lv_obj_set_pos(t->bottom, 642, 178);
+
+        t->footer = text(tile, &lv_font_montserrat_16, C_MUTED, "");
+        lv_obj_set_width(t->footer, 520);
+        lv_label_set_long_mode(t->footer, LV_LABEL_LONG_DOT);
+        lv_obj_align(t->footer, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+        t->reset = button(tile, "Reset trip", C_SURFACE2, C_TEXT, on_reset_trip, NULL);
+        lv_obj_set_size(t->reset, 170, 44);
+        lv_obj_set_style_radius(t->reset, 12, 0);
+        lv_obj_align(t->reset, LV_ALIGN_BOTTOM_RIGHT, 0, 8);
+    }
+    dash_set_running(false);
 }
 
 /* ---- results -------------------------------------------------------------- */
@@ -1024,13 +1582,14 @@ static void show_values(const kl_event_t *ev)
         return;
     }
     lv_label_set_text_fmt(s_group_status, "Group %d  " LV_SYMBOL_BULLET "  %s%s", s_group,
-                          s_live ? "live" : "tap Live to keep updating",
+                          s_live ? "live, tap a value to pin it" : "tap Live to keep updating",
                           kw_labels_standard(s_modules[s_current].ident, s_group)
                               ? "  " LV_SYMBOL_BULLET "  standard VW labels" : "");
     for (int i = 0; i < MAX_VALUES; i++) {
         if (i < ev->count) {
             lv_label_set_text(s_value_labels[i], ev->values[i]);
             lv_label_set_text_fmt(s_value_names[i], "%d  " LV_SYMBOL_BULLET "  %s", i + 1, ev->labels[i]);
+            snprintf(s_value_label_text[i], sizeof(s_value_label_text[i]), "%s", ev->labels[i]);
             lv_obj_set_hidden(s_value_tiles[i], false);
         } else {
             lv_obj_set_hidden(s_value_tiles[i], true);
@@ -1105,10 +1664,22 @@ void gui_on_kline_event(const kl_event_t *ev)
     case KL_EV_GROUP:
         show_values(ev);
         break;
+    case KL_EV_DASH:
+        dash_apply(ev);
+        break;
     case KL_EV_DONE:
         s_busy = false;
         if (ev->op == KL_SCAN || ev->op == KL_DEMO)
             scan_finished();
+        if (ev->op == KL_DASH) {
+            dash_set_running(false);
+            if (s_dash_restart) {
+                s_dash_restart = false;
+                dash_start();
+            } else if (strncmp(lv_label_get_text(s_dash_status), "No cable", 8) != 0) {
+                lv_label_set_text(s_dash_status, "Stopped.");
+            }
+        }
         if (ev->op == KL_GROUP_LIVE) {
             s_live = false;
             lv_label_set_text(s_live_label, LV_SYMBOL_PLAY "  Live");
@@ -1133,8 +1704,10 @@ void gui_build(void)
     lv_theme_t *theme = lv_theme_default_init(disp, col(C_ACCENT), col(C_ERR), true, &lv_font_montserrat_20);
     lv_display_set_theme(disp, theme);
 
+    dash_load();
     build_home();
     build_detail();
+    build_dash();
     build_credits();
     update_pill();
     show_car(load_car(), false);
@@ -1175,6 +1748,14 @@ void gui_debug(const char *cmd)
         on_demo(NULL);
     } else if (strcmp(cmd, "credits") == 0) {
         on_credits(NULL);
+    } else if (strcmp(cmd, "dash") == 0) {
+        on_dash_open(NULL);
+    } else if (strcmp(cmd, "dash start") == 0) {
+        on_dash_open(NULL);
+        dash_start();
+    } else if (strcmp(cmd, "dash stop") == 0) {
+        if (s_dash_running)
+            kline_cancel();
     } else if (strcmp(cmd, "home") == 0) {
         lv_screen_load(s_home);
     }

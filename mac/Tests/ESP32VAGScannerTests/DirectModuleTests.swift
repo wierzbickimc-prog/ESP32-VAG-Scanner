@@ -93,6 +93,29 @@ final class DirectModuleTests: XCTestCase {
     }
 
     @MainActor
+    func testDashboardReadsEngineAndTransmissionThenStops() async throws {
+        let model = AppModel()
+        defer { model.kline.close() }
+        model.port = "demo:eurovan"
+        let dash = model.dashboard
+        dash.slots = DashSlot.defaults
+        dash.start(model: model)
+        XCTAssertTrue(dash.running)
+        XCTAssertTrue(model.busy)
+        let deadline = Date().addingTimeInterval(20)
+        while dash.states[2].value == nil && Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertEqual(try XCTUnwrap(dash.states[0].value), 70, accuracy: 25)   // coolant, °C (demo warms up from 50)
+        XCTAssertEqual(try XCTUnwrap(dash.states[1].value), 13.8, accuracy: 0.2) // battery, V
+        XCTAssertNotNil(dash.states[2].value)                                    // ATF from 02
+        XCTAssertNil(dash.states[2].error)
+        dash.stopReading()
+        try await waitUntilIdle(model)
+        XCTAssertFalse(dash.running)
+    }
+
+    @MainActor
     private func waitUntilIdle(_ model: AppModel) async throws {
         let deadline = Date().addingTimeInterval(10)
         while model.busy && Date() < deadline {

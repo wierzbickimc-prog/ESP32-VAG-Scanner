@@ -19,6 +19,7 @@ idf_component_register(
         io_esp32_ftdi.c
         kline_task.c
         ../../kwcore/car_profile.c
+        ../../kwcore/dashboard.c
         ../../kwcore/fake_ecu.c
         ../../kwcore/fault_table.c
         ../../kwcore/kw1281.c

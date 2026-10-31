@@ -5,3 +5,4 @@
 #include "fault_table.h"
 #include "car_profile.h"
 #include "labels.h"
+#include "dashboard.h"

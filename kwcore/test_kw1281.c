@@ -7,9 +7,12 @@
 #include "fault_table.h"
 #include "car_profile.h"
 #include "labels.h"
+#include "dashboard.h"
 #include "kw1281.h"
 
+#include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int failures;
@@ -260,6 +263,180 @@ static void test_fault_table(void)
 #endif
 }
 
+
+typedef struct {
+    int count, stop_after;
+    int per_address[256];
+    int errors;
+    double coolant, atf;
+    KwDashReading order[64];
+} DashLog;
+
+static int dash_cb(void *ctx, const KwDashReading *r)
+{
+    DashLog *log = ctx;
+    if (log->count < 64)
+        log->order[log->count] = *r;
+    log->count++;
+    if (r->err < 0) {
+        log->errors++;
+    } else {
+        log->per_address[r->address]++;
+        if (r->address == 0x01 && r->group == 4 && r->count >= 3)
+            kw_sensor_number(&r->values[2], &log->coolant, NULL);
+        if (r->address == 0x02 && r->group == 5 && r->count >= 1)
+            kw_sensor_number(&r->values[0], &log->atf, NULL);
+    }
+    return log->count >= log->stop_after;
+}
+
+static void test_dashboard_plan(void)
+{
+    KwDashLayout layout;
+    KwDashRead plan[KW_DASH_PLAN_MAX];
+    kw_dash_default(&layout);
+    CHECK(strcmp(layout.slot[0].name, "Coolant temperature") == 0);
+    CHECK(layout.slot[3].kind == KW_SLOT_FUEL);
+
+    /* coolant + battery share 01/4; ATF is 02/5; fuel adds 01/2 and 01/5, grouped by controller */
+    int n = kw_dash_plan(&layout, plan, KW_DASH_PLAN_MAX);
+    CHECK(n == 4);
+    if (n == 4) {
+        CHECK(plan[0].address == 0x01 && plan[0].group == 4);
+        CHECK(plan[1].address == 0x01 && plan[1].group == 2);
+        CHECK(plan[2].address == 0x01 && plan[2].group == 5);
+        CHECK(plan[3].address == 0x02 && plan[3].group == 5);
+    }
+    layout.slot[2].kind = KW_SLOT_EMPTY;
+    layout.slot[3].kind = KW_SLOT_EMPTY;
+    CHECK(kw_dash_plan(&layout, plan, KW_DASH_PLAN_MAX) == 1);
+    for (int i = 0; i < KW_DASH_SLOTS; i++)
+        layout.slot[i].kind = KW_SLOT_EMPTY;
+    CHECK(kw_dash_plan(&layout, plan, KW_DASH_PLAN_MAX) == 0);
+}
+
+static void test_dashboard_run(void)
+{
+    FakeEcu f;
+    KwIo io;
+    KwSession s;
+    KwDashLayout layout;
+    KwDashRead plan[KW_DASH_PLAN_MAX];
+    static DashLog log;
+
+    /* two controllers: 3 passes of 01's three groups, then 02, then back */
+    fake_ecu_init_car(&f, &io, FAKE_CAR_EUROVAN);
+    kw_dash_default(&layout);
+    int n = kw_dash_plan(&layout, plan, KW_DASH_PLAN_MAX);
+    memset(&log, 0, sizeof(log));
+    log.stop_after = 9 + 3 + 2;
+    kw_dash_run(&s, &io, plan, n, 3, dash_cb, &log);
+    CHECK(log.errors == 0);
+    CHECK(log.per_address[0x01] == 11 && log.per_address[0x02] == 3);
+    CHECK(log.order[8].address == 0x01 && log.order[9].address == 0x02);
+    CHECK(log.order[12].address == 0x01);
+    CHECK(f.wakes == 3);
+    CHECK(fabs(log.coolant - 90.0) < 0.01);
+    CHECK(fabs(log.atf - 75.0) < 0.01);
+    CHECK(f.saw_end);
+    CHECK(f.errors == 0);
+
+    /* one controller: stays connected */
+    fake_ecu_init_car(&f, &io, FAKE_CAR_EUROVAN);
+    layout.slot[2].kind = KW_SLOT_EMPTY;
+    n = kw_dash_plan(&layout, plan, KW_DASH_PLAN_MAX);
+    memset(&log, 0, sizeof(log));
+    log.stop_after = 30;
+    kw_dash_run(&s, &io, plan, n, 3, dash_cb, &log);
+    CHECK(f.wakes == 1);
+    CHECK(log.per_address[0x01] == 30);
+    CHECK(f.errors == 0);
+
+    /* missing controller and missing group: errors, then carries on */
+    fake_ecu_init_car(&f, &io, FAKE_CAR_GOLF4);
+    KwDashRead missing[] = { { 0x02, 5 }, { 0x01, 99 }, { 0x01, 4 } };
+    memset(&log, 0, sizeof(log));
+    log.stop_after = 6;
+    kw_dash_run(&s, &io, missing, 3, 2, dash_cb, &log);
+    CHECK(log.order[0].err == KW_ENOWAKE);
+    CHECK(log.order[1].err == KW_ENAK);
+    CHECK(log.order[2].err == KW_OK && log.order[2].count == 4);
+    CHECK(log.order[3].err == KW_ENAK);
+    CHECK(log.order[5].err == KW_ENOWAKE); /* next round tries 02 again */
+    CHECK(f.errors == 0);
+}
+
+static void test_sensor_numbers(void)
+{
+    /* kw_sensor_number must agree with the text kw_format_sensor shows */
+    static const int ids[] = { 1, 2, 3, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 18, 19, 20, 21, 22, 23, 24,
+                               25, 26, 28, 31, 32, 33, 34, 35, 36, 40, 43, 48, 52, 53, 54, 55, 60, 64, 65, 66 };
+    static const int samples[][2] = { { 0, 0 }, { 1, 1 }, { 10, 190 }, { 100, 138 }, { 200, 20 },
+                                      { 255, 255 }, { 37, 128 }, { 3, 250 } };
+    for (size_t i = 0; i < sizeof(ids) / sizeof(ids[0]); i++) {
+        for (size_t j = 0; j < sizeof(samples) / sizeof(samples[0]); j++) {
+            SensorValue sv = { ids[i], samples[j][0], samples[j][1] };
+            char text[64];
+            double v;
+            kw_format_sensor(&sv, text, sizeof(text));
+            CHECK(kw_sensor_number(&sv, &v, NULL));
+            double shown = strtod(text, NULL);
+            if (fabs(shown - v) > 0.051 + fabs(v) * 1e-6) {
+                fprintf(stderr, "  type %d (%d,%d): \"%s\" vs %g\n", ids[i], sv.a, sv.b, text, v);
+                failures++;
+            }
+        }
+    }
+    SensorValue status = { 16, 0, 1 };
+    double v;
+    CHECK(!kw_sensor_number(&status, &v, NULL));
+
+    const char *unit;
+    SensorValue coolant = { 5, 10, 190 };
+    CHECK(kw_sensor_number(&coolant, &v, &unit) && strcmp(unit, "°C") == 0);
+    CHECK(fabs(kw_unit_convert(v, unit, 1, &unit) - 194.0) < 1e-9 && strcmp(unit, "°F") == 0);
+    CHECK(fabs(kw_unit_convert(96.56064, "km/h", 1, &unit) - 60.0) < 1e-6 && strcmp(unit, "mph") == 0);
+    CHECK(kw_unit_convert(13.8, "V", 1, &unit) == 13.8 && strcmp(unit, "V") == 0);
+}
+
+static void test_fuel(void)
+{
+    KwFuel f;
+    char text[32];
+    kw_fuel_init(&f, 1.0);
+    CHECK(kw_fuel_instant(&f) < 0);
+
+    /* 30 g/s of air at 96 km/h for an hour */
+    for (int t = 0; t <= 3600; t++) {
+        kw_fuel_maf(&f, 30.0, t);
+        kw_fuel_speed(&f, 96.0, t + 0.5);
+    }
+    double lph = 30.0 / 14.7 / 745.0 * 3600.0; /* 9.86 l/h */
+    CHECK(fabs(f.flow_lph - lph) < 1e-9);
+    CHECK(fabs(kw_fuel_instant(&f) - lph / 96.0 * 100.0) < 1e-9);
+    CHECK(fabs(f.trip_km - 96.0) < 0.1);
+    CHECK(fabs(f.trip_l - lph) < 0.01);
+    CHECK(fabs(kw_fuel_average(&f) - kw_fuel_instant(&f)) < 0.01);
+    kw_fuel_format(kw_fuel_average(&f), 1, text, sizeof(text));
+    CHECK(strcmp(text, "22.9 mpg") == 0);
+    kw_fuel_format(kw_fuel_average(&f), 0, text, sizeof(text));
+    CHECK(strcmp(text, "10.3 l/100km") == 0);
+
+    /* pumped 10% more than estimated: the factor scales flow */
+    double factor = kw_fuel_calibrated_factor(&f, f.trip_l * 1.1);
+    CHECK(fabs(factor - 1.1) < 1e-9);
+
+    /* a long gap (reading another controller for too long) isn't integrated */
+    double before = f.trip_km;
+    kw_fuel_speed(&f, 96.0, 3600 + 60);
+    CHECK(f.trip_km == before);
+
+    kw_fuel_speed(&f, 0.0, 3700);
+    CHECK(kw_fuel_instant(&f) < 0); /* standing: show flow instead */
+    kw_fuel_reset_trip(&f);
+    CHECK(kw_fuel_average(&f) < 0);
+}
+
 int main(void)
 {
     struct { const char *name; void (*fn)(void); } tests[] = {
@@ -273,6 +450,10 @@ int main(void)
         { "fault code table CSV + fault types", test_fault_table },
         { "car detection from idents", test_car_detection },
         { "measuring-block labels", test_labels },
+        { "dashboard plan", test_dashboard_plan },
+        { "dashboard reads across controllers", test_dashboard_run },
+        { "sensor numbers match formatted text", test_sensor_numbers },
+        { "fuel economy", test_fuel },
     };
     for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); i++) {
         int before = failures;

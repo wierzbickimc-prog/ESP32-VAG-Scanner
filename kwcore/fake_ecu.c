@@ -4,7 +4,7 @@
 #include <string.h>
 
 enum { IDLE, WAIT_KEYWORD_ACK, TALKING, ENDED };
-enum { KIND_ENGINE, KIND_CLUSTER, KIND_CCM, KIND_ABS, KIND_HVAC, KIND_AIRBAG };
+enum { KIND_ENGINE, KIND_CLUSTER, KIND_CCM, KIND_ABS, KIND_HVAC, KIND_AIRBAG, KIND_TRANS };
 
 static uint8_t odd_parity(uint8_t b)
 {
@@ -91,37 +91,84 @@ static int wobble(FakeEcu *f, int base, int spread)
     return base + (int)((f->tick >> 16) % (2 * spread + 1)) - spread;
 }
 
+/*
+ * With `live` set, the car drives a loop: idle, pull away, cruise at about
+ * 60 mph, slow down, while the coolant and ATF warm up. One step per group read.
+ */
+typedef struct {
+    int rpm_b;      /* rpm = 0.2 * 200 * b */
+    int speed;      /* km/h */
+    double maf;     /* g/s */
+    int coolant_b;  /* deg C = b - 100 */
+    int atf_b;
+} Drive;
+
+static Drive drive_state(FakeEcu *f)
+{
+    Drive d = { 20, 0, 3.0, 190, 175 };
+    if (!f->live)
+        return d;
+    unsigned t = f->drive++ % 240;
+    if (t < 20) {               /* idle */
+        d.speed = 0;
+    } else if (t < 60) {        /* accelerate */
+        d.speed = (int)(t - 20) * 96 / 40;
+        d.maf = 18.0 + d.speed * 0.25;
+    } else if (t < 200) {       /* cruise */
+        d.speed = wobble(f, 96, 3);
+        d.maf = 30.0 + (d.speed - 96) * 0.8 + wobble(f, 0, 2);
+    } else {                    /* coast down on the overrun */
+        d.speed = (int)(240 - t) * 96 / 40;
+        d.maf = 4.0;
+    }
+    if (d.speed > 0)
+        d.rpm_b = 20 + d.speed / 4;
+    int warm = f->drive > 600 ? 600 : (int)f->drive;
+    d.coolant_b = 150 + warm * 40 / 600 + wobble(f, 0, 1);
+    d.atf_b = 130 + warm * 50 / 600 + wobble(f, 0, 1);
+    return d;
+}
+
 /* Returns the body length of measuring group `g`, or -1 if the group doesn't exist. */
 static int group_values(FakeEcu *f, int g, uint8_t *out)
 {
     uint8_t *p = out;
 #define SV(id, a, b) (*p++ = (uint8_t)(id), *p++ = (uint8_t)(a), *p++ = (uint8_t)(b))
     switch (f->active->kind) {
-    case KIND_ENGINE:
+    case KIND_ENGINE: {
+        Drive d = drive_state(f);
+        int maf_b = (int)(d.maf / 1.421);
+        int maf_a = (int)((d.maf - maf_b * 1.421) * 182);
         if (g == 1) {        /* VW standard group 1: rpm, coolant, lambda control bank 1 / bank 2 */
-            SV(1, 200, wobble(f, 20, 1));
-            SV(5, 10, wobble(f, 190, 1));
+            SV(1, 200, d.rpm_b);
+            SV(5, 10, d.coolant_b);
             SV(2, 250, wobble(f, 4, 2));
             SV(2, 250, wobble(f, 3, 2));
         } else if (g == 2) { /* rpm, load %, injection ms, MAF */
-            SV(1, 200, wobble(f, 20, 1));
+            SV(1, 200, d.rpm_b);
             SV(2, 250, wobble(f, 85, 4));
             SV(15, 100, wobble(f, 29, 2));
-            SV(25, 1, wobble(f, 2, 0));
+            SV(25, maf_a, maf_b);
         } else if (g == 3) { /* rpm, MAF, throttle angle, ignition */
-            SV(1, 200, wobble(f, 20, 1));
-            SV(25, 1, 2);
+            SV(1, 200, d.rpm_b);
+            SV(25, maf_a, maf_b);
             SV(3, 250, wobble(f, 6, 1));
             SV(4, 100, wobble(f, 115, 2));
         } else if (g == 4) { /* rpm, battery, coolant, intake air */
-            SV(1, 200, wobble(f, 20, 1));
+            SV(1, 200, d.rpm_b);
             SV(6, 100, wobble(f, 138, 1));
-            SV(5, 10, wobble(f, 190, 1));
+            SV(5, 10, d.coolant_b);
             SV(5, 10, wobble(f, 128, 1));
+        } else if (g == 5) { /* rpm, load, vehicle speed, operating condition */
+            SV(1, 200, d.rpm_b);
+            SV(2, 250, wobble(f, 85, 4));
+            SV(7, 100, d.speed);
+            SV(17, 'P', 'L');
         } else {
             return -1;
         }
         break;
+    }
     case KIND_CLUSTER:
         if (g == 1) {        /* speed, rpm, oil pressure switch, time */
             SV(7, 100, 0);
@@ -153,6 +200,22 @@ static int group_values(FakeEcu *f, int g, uint8_t *out)
             return -1;
         }
         break;
+    case KIND_TRANS: {
+        Drive d = drive_state(f);
+        if (g == 4) {        /* gear selector, gear, battery, vehicle speed */
+            SV(17, 'D', ' ');
+            SV(8, 10, d.speed > 0 ? 1 + d.speed / 30 : 1);
+            SV(6, 100, wobble(f, 138, 1));
+            SV(7, 100, d.speed);
+        } else if (g == 5) { /* ATF temperature, rpm, ... */
+            SV(5, 10, d.atf_b);
+            SV(1, 200, d.rpm_b);
+            SV(2, 250, d.speed > 0 ? 200 : 0);
+        } else {
+            return -1;
+        }
+        break;
+    }
     case KIND_HVAC:
         if (g == 1) {        /* outside, cabin, blower volts, coolant */
             SV(5, 10, wobble(f, 112, 0));
@@ -401,6 +464,7 @@ static void f_flush(void *ctx)
         if (m->address != addr)
             continue;
         f->active = m;
+        f->wakes++;
         f->state = WAIT_KEYWORD_ACK;
         f->have_counter = 0;
         f->in_len = 0;
@@ -457,6 +521,10 @@ static void setup_eurovan(FakeEcu *f)
         .faults = { { 16486, 0x1E }, { 16684, 0x23 }, { 532, 0x87 } },
         .fault_count = 3,
     };
+    f->modules[4] = (FakeModule){
+        .address = 0x02, .keyword = 1281, .kind = KIND_TRANS,
+        .ident = { "7D0927156   AG4 Getriebe 01P 0001", NULL, NULL },
+    };
     f->modules[1] = (FakeModule){
         .address = 0x03, .keyword = 1281, .kind = KIND_ABS,
         .ident = { "7D0907379F  ABS/EDS 20 IE  0001", NULL, NULL },
@@ -475,7 +543,7 @@ static void setup_eurovan(FakeEcu *f)
         .faults = { { 771, 0x1D } },
         .fault_count = 1,
     };
-    f->module_count = 4;
+    f->module_count = 5;
 }
 
 static void setup_harlequin(FakeEcu *f)

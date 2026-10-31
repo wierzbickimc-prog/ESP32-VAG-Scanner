@@ -125,6 +125,23 @@ static void do_group(const kl_request_t *req)
     kw_end(&s_session);
 }
 
+static int on_dash_reading(void *ctx, const KwDashReading *r)
+{
+    (void)ctx;
+    emit((kl_event_t){ .type = KL_EV_DASH, .op = KL_DASH, .ok = r->err == KW_OK, .err = r->err,
+                       .address = r->address, .group = r->group, .count = r->count,
+                       .sensors = r->values, .ident = r->ident });
+    demo_pause(120);
+    return s_cancel;
+}
+
+static void do_dash(const kl_request_t *req)
+{
+    s_cancel = false;
+    /* six rounds per controller visit: a wake-up costs 2-3 s on a real bus */
+    kw_dash_run(&s_session, bus(), req->plan, req->plan_count, 6, on_dash_reading, NULL);
+}
+
 /* Opens the cable when it appears and reports changes. */
 static void poll_cable(bool *was_connected)
 {
@@ -174,10 +191,14 @@ static void kline_task(void *arg)
             /* no cable: answer with an error so the UI isn't left waiting */
             if (req.op == KL_FAULTS || req.op == KL_CLEAR)
                 emit((kl_event_t){ .type = KL_EV_FAULTS, .op = req.op, .address = req.address, .err = KW_ENOWAKE });
+            else if (req.op == KL_DASH)
+                emit((kl_event_t){ .type = KL_EV_DASH, .op = req.op, .err = KW_ENOWAKE });
             else
                 emit((kl_event_t){ .type = KL_EV_GROUP, .address = req.address, .err = KW_ENOWAKE });
         } else if (req.op == KL_FAULTS || req.op == KL_CLEAR) {
             do_faults(&req);
+        } else if (req.op == KL_DASH) {
+            do_dash(&req);
         } else {
             do_group(&req);
         }
