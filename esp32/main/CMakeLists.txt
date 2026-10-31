@@ -27,13 +27,16 @@ idf_component_register(
         ../../kwcore/labels.c
         ../../kwcore/wikitext.c
     INCLUDE_DIRS . ../../kwcore
-    REQUIRES usb esp_timer esp_wifi esp_netif esp_event esp_http_client mbedtls esp_lcd esp_driver_gpio esp_driver_i2c esp_driver_uart nvs_flash jc8012p4a1c
+    REQUIRES usb esp_timer esp_wifi esp_netif esp_event esp_http_client mbedtls sdmmc esp_driver_sdmmc esp_lcd esp_driver_gpio esp_driver_i2c esp_driver_uart nvs_flash jc8012p4a1c
     EMBED_FILES
         "${hero_dir}/hero_eurovan.rgb565"
         "${hero_dir}/hero_harlequin.rgb565"
         "${hero_dir}/hero_family.rgb565"
     EMBED_TXTFILES ${text_files}
 )
+
+# net.c: survive a board whose ESP32-C6 doesn't answer (ESP-Hosted would abort).
+target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=esp_wifi_remote_init")
 
 if(EXISTS "${FAULT_CODES_CSV}")
     target_compile_definitions(${COMPONENT_LIB} PRIVATE HAVE_FAULT_TABLE=1)

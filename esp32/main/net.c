@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "driver/sdmmc_host.h"
 #include "esp_crt_bundle.h"
 #include "esp_event.h"
 #include "esp_heap_caps.h"
@@ -16,6 +17,7 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "nvs.h"
+#include "sdmmc_cmd.h"
 #include "wikitext.h"
 
 static const char *TAG = "net";
@@ -103,7 +105,9 @@ static void connect_saved(void)
     memcpy(cfg.sta.ssid, s_ssid, strlen(s_ssid));
     memcpy(cfg.sta.password, s_pass, strlen(s_pass));
     cfg.sta.threshold.authmode = s_pass[0] ? WIFI_AUTH_WEP : WIFI_AUTH_OPEN;
-    esp_wifi_disconnect();
+    /* only drop a link we have: a disconnect cancels the connect that follows it */
+    if (s_state == NET_CONNECTED || s_state == NET_CONNECTING || s_state == NET_FAILED)
+        esp_wifi_disconnect();
     esp_wifi_set_config(WIFI_IF_STA, &cfg);
     s_want = true;
     s_auth_fails = 0;
@@ -122,9 +126,9 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
 {
     (void)arg;
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        const wifi_event_sta_disconnected_t *d = data;
         if (!s_want)
             return;
-        const wifi_event_sta_disconnected_t *d = data;
         bool auth = d->reason == WIFI_REASON_AUTH_FAIL || d->reason == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT
                     || d->reason == WIFI_REASON_HANDSHAKE_TIMEOUT || d->reason == WIFI_REASON_AUTH_EXPIRE;
         ESP_LOGI(TAG, "disconnected, reason %d", d->reason);
@@ -266,10 +270,87 @@ static void do_wiki(int dtc)
     s_callback(&ev);
 }
 
+/* ---- a board without a working C6 ------------------------------------------ */
+
+/*
+ * ESP-Hosted can't cope with a missing co-processor: its SDIO receive task
+ * returns when the card doesn't answer, which FreeRTOS treats as fatal, and
+ * the board reboots every few seconds. So before anything starts ESP-Hosted,
+ * look for an SDIO card on its pins (the C6 runs from power-on) and leave
+ * Wi-Fi off if there's none. ESP-Hosted then resets the C6 and starts over.
+ */
+static bool c6_present(void)
+{
+    sdmmc_host_t host = SDMMC_HOST_DEFAULT();
+    host.slot = CONFIG_ESP_HOSTED_SDIO_SLOT;
+    host.max_freq_khz = SDMMC_FREQ_PROBING;
+    host.flags |= SDMMC_HOST_FLAG_ALLOC_ALIGNED_BUF;
+    sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();
+    slot.width = CONFIG_ESP_HOSTED_SDIO_BUS_WIDTH;
+    slot.clk = CONFIG_ESP_HOSTED_SDIO_PIN_CLK;
+    slot.cmd = CONFIG_ESP_HOSTED_SDIO_PIN_CMD;
+    slot.d0 = CONFIG_ESP_HOSTED_SDIO_PIN_D0;
+    slot.d1 = CONFIG_ESP_HOSTED_SDIO_PIN_D1;
+    slot.d2 = CONFIG_ESP_HOSTED_SDIO_PIN_D2;
+    slot.d3 = CONFIG_ESP_HOSTED_SDIO_PIN_D3;
+
+    /* When the C6 answers, the host stays up: ESP-Hosted's sdmmc_host_init()
+     * then skips its own set-up (re-initialising after a deinit crashes it). */
+    sdmmc_card_t card;
+    esp_err_t err = sdmmc_host_init();
+    if (err == ESP_OK) {
+        err = sdmmc_host_init_slot(host.slot, &slot);
+        if (err == ESP_OK)
+            err = sdmmc_card_init(&host, &card);
+        if (err != ESP_OK)
+            sdmmc_host_deinit();
+    }
+    ESP_LOGI(TAG, "ESP32-C6 on SDIO: %s", err == ESP_OK ? "found" : esp_err_to_name(err));
+    return err == ESP_OK;
+}
+
+/*
+ * ESP-Hosted's esp_wifi_remote_init() waits up to 1000 s for the C6 and then
+ * fails through ESP_ERROR_CHECK, which aborts the whole firmware: on a board
+ * without a C6 the scanner would reboot every ~17 minutes. The linker wraps it
+ * (-Wl,--wrap, see CMakeLists.txt): the handshake runs in a throwaway task,
+ * and if the C6 hasn't answered within C6_WAIT_MS we report Wi-Fi unavailable
+ * instead. The task's own retries end in an error return, not an abort.
+ */
+#define C6_WAIT_MS 15000
+
+esp_err_t __real_esp_wifi_remote_init(const wifi_init_config_t *config);
+esp_err_t transport_drv_reconfigure(void); /* ESP-Hosted internals */
+uint8_t is_transport_tx_ready(void);
+
+static void c6_handshake(void *arg)
+{
+    (void)arg;
+    if (transport_drv_reconfigure() != ESP_OK)
+        ESP_LOGW(TAG, "the Wi-Fi co-processor never answered");
+    vTaskDelete(NULL);
+}
+
+esp_err_t __wrap_esp_wifi_remote_init(const wifi_init_config_t *config)
+{
+    if (!is_transport_tx_ready()) {
+        xTaskCreate(c6_handshake, "c6_handshake", 4096, NULL, 4, NULL);
+        for (int ms = 0; ms < C6_WAIT_MS && !is_transport_tx_ready(); ms += 100)
+            vTaskDelay(pdMS_TO_TICKS(100));
+        if (!is_transport_tx_ready()) {
+            ESP_LOGW(TAG, "no answer from the ESP32-C6 in %d s; Wi-Fi off", C6_WAIT_MS / 1000);
+            return ESP_ERR_NOT_FOUND;
+        }
+    }
+    return __real_esp_wifi_remote_init(config);
+}
+
 /* ---- task ----------------------------------------------------------------- */
 
 static bool wifi_up(void)
 {
+    if (!c6_present())
+        return false;
     esp_netif_init();
     esp_err_t err = esp_event_loop_create_default();
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)

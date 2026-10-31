@@ -14,6 +14,13 @@
   Fault details on the P4 have **Read on Ross-Tech** plus the QR code. Console: `wifi`,
   `wifi scan`, `wiki <code>`.
 - Verified on the board with the owner's network: P1116 and 00532 pages render.
+- **A missing or silent C6 must not take the scanner down.** ESP-Hosted 2.0.17 can't cope: its
+  SDIO receive task returns when card init fails (FreeRTOS aborts, reboot every ~8 s), and
+  `esp_wifi_remote_init` aborts via `ESP_ERROR_CHECK` after 1000 s of retries. `net.c` therefore
+  probes for an SDIO card on the hosted pins first (`c6_present`) and leaves Wi-Fi off if none
+  answers; on success the SDMMC host stays up for ESP-Hosted (re-init after `sdmmc_host_deinit`
+  asserts in IDF 5.5). `esp_wifi_remote_init` is also linker-wrapped with a 15 s wait. Verified on
+  the board both ways (C6 held in reset by a test-only build: Wi-Fi off, no reboots, demo runs).
 - This supersedes "No Wi-Fi" below for this purpose only. Wi-Fi is not a K-line bridge.
 
 ## EuroVan transmission: 1200 baud, header+body groups (2026-10-31)
