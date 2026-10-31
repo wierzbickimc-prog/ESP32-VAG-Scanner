@@ -1,6 +1,6 @@
-# Builds the ESP32-P4 firmware on every change, and on a published release
-# (or a manual run) puts it on GitHub Pages behind the ESP Web Tools install
-# button and attaches it to the release.
+# Builds the ESP32-P4 firmware on every change. On a published release it
+# attaches the image to the release and starts pages.yml, which puts it behind
+# the ESP Web Tools install button.
 #
 # The build includes the KW1281 fault type names (GPL-3.0, like this project)
 # and never the Ross-Tech fault description table, which isn't ours to share.
@@ -14,7 +14,6 @@ on:
     paths: ["esp32/**", "kwcore/**", "assets/**", "web/**", ".github/workflows/firmware.yml"]
   release:
     types: [published]
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -60,35 +59,23 @@ jobs:
           name: esp32-vag-scanner-p4
           path: site/
 
-      - if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: site/
-
-  publish:
-    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+  release:
+    # Attach the image to the release, then publish the install page from main
+    # (GitHub Pages only accepts deployments from the default branch).
+    if: github.event_name == 'release'
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-    concurrency:
-      group: pages
-      cancel-in-progress: false
+      actions: write
     steps:
-      - id: deploy
-        uses: actions/deploy-pages@v4
-
-      - if: github.event_name == 'release'
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: esp32-vag-scanner-p4
 
-      - if: github.event_name == 'release'
-        env:
+      - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" esp32-vag-scanner-p4.bin --repo "$GITHUB_REPOSITORY"
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release upload "$TAG" esp32-vag-scanner-p4.bin --clobber --repo "$GITHUB_REPOSITORY"
+          gh workflow run pages.yml --ref main -f tag="$TAG" --repo "$GITHUB_REPOSITORY"

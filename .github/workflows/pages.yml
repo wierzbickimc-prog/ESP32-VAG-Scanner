@@ -1,0 +1,54 @@
+# Publishes the install page (web/) with a release's firmware image to GitHub
+# Pages. Started by firmware.yml after a release, or by hand to republish.
+name: Install page
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (empty = latest release)"
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble the page with the release's firmware
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          tag="${TAG:-$(gh release view --json tagName --jq .tagName)}"
+          mkdir -p site
+          gh release download "$tag" --pattern esp32-vag-scanner-p4.bin --dir site
+          cp web/index.html site/
+          python3 - "$tag" <<'PY'
+          import json, sys
+          m = json.load(open("web/manifest.json"))
+          m["version"] = sys.argv[1]
+          json.dump(m, open("site/manifest.json", "w"), indent=2)
+          PY
+          echo "Published $tag" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
