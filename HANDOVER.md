@@ -18,6 +18,13 @@
 - Ross-Tech wiki: OBD codes live at `17524/P1116/004374` (third part = P-code digits as hex).
   `kw_fault_wiki_url` builds both forms; the P4 shows it as a QR code (no browser on the P4).
 - Fuel economy never shows gal/h: standing still reads 0.0 mpg ("stopped").
+- Speeds in the literature (no authoritative per-module table exists): instruments (17) usually
+  10400, sometimes 9600 (kw1281test wiki); 15/46/56 9600; one Audi owner lists 03/15/35 at 10400
+  and 08 HVAC at 4800; trip-computer projects add 1200/2400 for old units (our 01P). KWP2000
+  controllers answer the 5 baud wake-up at 10400, so at 9600 they look like `B5` too; the switch
+  now reaches them and reports "KWP2000, not supported" instead of "no response". Upstream logs
+  an EDC15 answering `95`/`B5`, matching `heard_as`. Special modes (Audi C5 cluster dump at 19200
+  even parity, EDC15 boot at 28800) are not diagnostics and out of scope.
 
 ## First real car: EuroVan engine at 10400 baud (2026-10-31)
 
