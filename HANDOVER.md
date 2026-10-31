@@ -1,5 +1,25 @@
 # Handover: ESP32 VAG Scanner (macOS + ESP32-P4)
 
+## Planned: 4.3" Guition JC4880P443C port (board ordered 2026-10-31)
+
+480x800 MIPI-DSI, ESP32-P4 + ESP32-C6. Reported GT911 touch; the panel controller (ST7701?)
+and every pin are **unconfirmed**: read them from the vendor demo code/schematic or the board.
+
+1. **Identify on arrival:** P4 chip revision (v1.x runs this sdkconfig; v3 needs its own),
+   LCD controller + init sequence, touch I2C pins/address, backlight, C6 SDIO pins and reset,
+   flash/PSRAM size. Probe the C6 with the `c6_present()` logic before trusting the pins.
+2. **Board layer:** move `board_display.c` behind a board choice (Kconfig `BOARD_JC8012P4A1C` /
+   `BOARD_JC4880P443C`), each with its panel/touch driver, pins and resolution. Keep
+   `SCREEN_W/H` from the board, not literals.
+3. **Layout:** `gui.c` uses absolute 800x1280 coordinates. Same portrait shape (0.6 vs 0.625):
+   add a `S(x)` scale macro (x * SCREEN_W / 800) for positions/sizes, pick fonts per board
+   (48->28, 36->24, 28->20, 24->16, 20->16), and recheck the dashboard tiles, Wi-Fi keyboard
+   (shorter), fault dialog with QR (smaller code) and hero images (need 480-wide RGB565 heroes
+   from `make_assets.py`).
+4. **Builds:** two sdkconfig default sets, two images; the install page gets one button per
+   board (ESP Web Tools only identifies the chip). The workflow builds both.
+5. **Test:** demo car on both boards (dashboard, live data, faults, Wi-Fi viewer), then the van.
+
 ## Wi-Fi and the Ross-Tech viewer on the P4 (2026-10-31)
 
 - The board has an **ESP32-C6** on SDIO (P4 Function EV board pins: CLK 18, CMD 19, D0-D3 14-17,
