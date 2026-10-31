@@ -264,6 +264,38 @@ static void test_fault_table(void)
 }
 
 
+static void test_baud_switch(void)
+{
+    FakeEcu f;
+    KwIo io;
+    KwSession s;
+
+    /* the EuroVan's ME7.1 answers at 10400: one garbled sync at 9600, then it connects */
+    fake_ecu_init_car(&f, &io, FAKE_CAR_EUROVAN);
+    CHECK(kw_connect_attempts(&s, &io, 0x01, 1) == KW_OK);
+    CHECK(s.baud == 10400 && io.baud == 10400 && f.baud == 10400);
+    CHECK(f.baud_switches == 1);
+    CHECK(strstr(s.ident, "ME7.1") != NULL);
+    kw_end(&s);
+
+    /* a 9600 controller after it: switches back */
+    CHECK(kw_connect_attempts(&s, &io, 0x17, 1) == KW_OK);
+    CHECK(s.baud == 10400); /* the fake's other controllers answer at any speed */
+    kw_end(&s);
+
+    /* the speed stays: the next engine connect needs no switch */
+    CHECK(kw_connect_attempts(&s, &io, 0x01, 1) == KW_OK);
+    CHECK(f.baud_switches == 1);
+    kw_end(&s);
+
+    /* without set_baud the old behaviour remains: no response, sync byte reported */
+    fake_ecu_init_car(&f, &io, FAKE_CAR_EUROVAN);
+    io.set_baud = NULL;
+    CHECK(kw_connect_attempts(&s, &io, 0x01, 1) == KW_ENOWAKE);
+    CHECK(s.sync_byte == 0xB5);
+    CHECK(f.errors == 0);
+}
+
 typedef struct {
     int count, stop_after;
     int per_address[256];
@@ -450,6 +482,7 @@ int main(void)
         { "fault code table CSV + fault types", test_fault_table },
         { "car detection from idents", test_car_detection },
         { "measuring-block labels", test_labels },
+        { "baud switch to 10400 (ME7)", test_baud_switch },
         { "dashboard plan", test_dashboard_plan },
         { "dashboard reads across controllers", test_dashboard_run },
         { "sensor numbers match formatted text", test_sensor_numbers },

@@ -26,6 +26,7 @@ typedef struct FakeModule {
     FaultCode faults[8];
     int fault_count;
     int kind;                 /* selects the measuring groups */
+    int baud;                 /* answers only at this speed (0 = any) */
 } FakeModule;
 
 typedef struct FakeEcu {
@@ -42,6 +43,8 @@ typedef struct FakeEcu {
     int errors;
     int saw_end;
     int wakes;                /* controllers woken */
+    int baud;                 /* the tester's line speed (KwIo set_baud) */
+    int baud_switches;
 
     /* internals */
     int edges;

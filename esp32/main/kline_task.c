@@ -11,6 +11,8 @@
 
 static const char *TAG = "kline";
 
+/* The starting speed; kw1281.c switches to 10400 when a controller needs it,
+ * and the cable reopens at whichever speed last worked. */
 #define BAUD 9600
 
 static const uint8_t SCAN_ADDRESSES[] = {
@@ -152,7 +154,9 @@ static void poll_cable(bool *was_connected)
         *was_connected = false;
         emit((kl_event_t){ .type = KL_EV_CABLE, .ok = false });
     }
-    if (ftdi_open(BAUD, 200)) {
+    int baud = s_cable_io.baud ? s_cable_io.baud : BAUD;
+    if (ftdi_open(baud, 200)) {
+        s_cable_io.baud = baud;
         kw_reset_interface(&s_cable_io);
         *was_connected = true;
         emit((kl_event_t){ .type = KL_EV_CABLE, .ok = true });

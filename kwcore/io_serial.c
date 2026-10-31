@@ -122,6 +122,28 @@ static void serial_flush(void *ctx)
     tcflush(c->fd, TCIFLUSH);
 }
 
+static int serial_set_baud(void *ctx, int baud)
+{
+    SerialCtx *c = ctx;
+#ifdef __APPLE__
+    speed_t speed = (speed_t)baud;
+    if (ioctl(c->fd, IOSSIOSPEED, &speed) != 0)
+        return -1;
+#else
+    struct termios t;
+    speed_t speed = baud == 4800 ? B4800 : baud == 19200 ? B19200 : B9600;
+    if ((baud != 4800 && baud != 9600 && baud != 19200) || tcgetattr(c->fd, &t) != 0)
+        return -1;
+    cfsetspeed(&t, speed);
+    if (tcsetattr(c->fd, TCSANOW, &t) != 0)
+        return -1;
+#endif
+    tcflush(c->fd, TCIFLUSH);
+    if (c->trace)
+        fprintf(stderr, "BAUD %d\n", baud);
+    return 0;
+}
+
 int kw_serial_open(KwIo *io, const char *port, int baud)
 {
     SerialCtx *c = calloc(1, sizeof(*c));
@@ -176,6 +198,8 @@ int kw_serial_open(KwIo *io, const char *port, int baud)
     io->flush_in = serial_flush;
     io->now_us = serial_now_us;
     io->sleep_us = serial_sleep_us;
+    io->set_baud = serial_set_baud;
+    io->baud = baud;
     io->ctx = c;
     return 0;
 

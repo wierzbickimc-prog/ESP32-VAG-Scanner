@@ -463,6 +463,12 @@ static void f_flush(void *ctx)
         FakeModule *m = &f->modules[i];
         if (m->address != addr)
             continue;
+        if (m->baud && m->baud != f->baud) {
+            /* $55 01 8A sent at 10400, read at 9600 (as seen on a real ME7) */
+            rx_push(f, 0xB5);
+            rx_push(f, 0x80);
+            return;
+        }
         f->active = m;
         f->wakes++;
         f->state = WAIT_KEYWORD_ACK;
@@ -476,6 +482,14 @@ static void f_flush(void *ctx)
         rx_push(f, keyword_msb(m));
         return;
     }
+}
+
+static int f_set_baud(void *ctx, int baud)
+{
+    FakeEcu *f = ctx;
+    f->baud = baud;
+    f->baud_switches++;
+    return 0;
 }
 
 static uint64_t f_now(void *ctx)
@@ -516,8 +530,8 @@ static void setup_golf4(FakeEcu *f)
 static void setup_eurovan(FakeEcu *f)
 {
     f->modules[0] = (FakeModule){
-        .address = 0x01, .keyword = 1281, .kind = KIND_ENGINE,
-        .ident = { "022906032BK 2.8L V6/5V     ", "G   0002", NULL },
+        .address = 0x01, .keyword = 1281, .kind = KIND_ENGINE, .baud = 10400,
+        .ident = { "022906032AF MOTRONIC ME7.1 ", "G   0003", NULL },
         .faults = { { 16486, 0x1E }, { 16684, 0x23 }, { 532, 0x87 } },
         .fault_count = 3,
     };
@@ -592,5 +606,8 @@ void fake_ecu_init_car(FakeEcu *f, KwIo *io, FakeCar car)
     io->flush_in = f_flush;
     io->now_us = f_now;
     io->sleep_us = f_sleep;
+    io->set_baud = f_set_baud;
+    io->baud = 9600;
+    f->baud = 9600;
     io->ctx = f;
 }

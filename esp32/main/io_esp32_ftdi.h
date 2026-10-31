@@ -18,5 +18,5 @@ bool ftdi_connected(void);
 /* Closes the cable after a disconnect (or on request). */
 void ftdi_close(void);
 
-/* Fills `io` with the FTDI backend. Valid while ftdi_connected(). */
+/* Fills `io` with the FTDI backend (baud switching included). Valid while ftdi_connected(). */
 void ftdi_attach(KwIo *io);

@@ -194,6 +194,20 @@ static void io_dtr(void *ctx, int on)
         vendor(SIO_MODEM_CTRL, on ? 0x0101 : 0x0100, FTDI_INDEX);
 }
 
+static int io_set_baud(void *ctx, int baud)
+{
+    (void)ctx;
+    uint16_t value, index;
+    if (!s_connected)
+        return -1;
+    baud_divisor(baud, &value, &index);
+    if (vendor(SIO_SET_BAUD_RATE, value, index) != ESP_OK)
+        return -1;
+    xStreamBufferReset(s_rx);
+    ESP_LOGI(TAG, "switched to %d baud", baud);
+    return 0;
+}
+
 static void io_flush(void *ctx)
 {
     (void)ctx;
@@ -227,5 +241,6 @@ void ftdi_attach(KwIo *io)
     io->flush_in = io_flush;
     io->now_us = io_now;
     io->sleep_us = io_sleep;
+    io->set_baud = io_set_baud;
     io->ctx = NULL;
 }

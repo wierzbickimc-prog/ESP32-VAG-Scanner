@@ -22,6 +22,13 @@ extern "C" {
  *   flush_in    discards anything buffered on the receive side.
  *   now_us      monotonic clock in microseconds.
  *   sleep_us    sleeps at least `us` microseconds.
+ *   set_baud    optional (may be NULL): changes the line speed, returns 0 on success.
+ *   baud        the current line speed; the backend sets it when it opens.
+ *
+ * Controllers answer the wake-up at their own speed (9600 or 10400). A sync
+ * byte other than $55 means the speeds differ: with set_baud, the core then
+ * switches between 9600 and 10400 and wakes the controller again. The new
+ * speed stays for later connections.
  */
 typedef struct KwIo {
     int (*read_byte)(void *ctx, int timeout_ms);
@@ -31,6 +38,8 @@ typedef struct KwIo {
     void (*flush_in)(void *ctx);
     uint64_t (*now_us)(void *ctx);
     void (*sleep_us)(void *ctx, uint32_t us);
+    int (*set_baud)(void *ctx, int baud);
+    int baud;
     void *ctx;
 } KwIo;
 
@@ -58,6 +67,7 @@ typedef struct KwSession {
     uint8_t address;
     int protocol;          /* keyword from the wakeup, e.g. 1281 */
     int sync_byte;         /* last byte seen where $55 was expected, -1 if none */
+    int baud;              /* line speed the controller answered at */
     uint8_t counter;       /* next expected/sent block counter */
     int have_counter;      /* 0 until the first block is received */
     int connected;

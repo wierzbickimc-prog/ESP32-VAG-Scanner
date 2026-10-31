@@ -101,15 +101,37 @@ static int wakeup_once(KwSession *s, int even_parity)
     return KW_OK;
 }
 
+/*
+ * A byte other than $55 after the address means the controller answered at
+ * another speed (an ME7 at 10400 read at 9600 gives $B5). Switch once and
+ * try again; that retry doesn't count against `attempts`.
+ */
+static int switch_baud(KwSession *s)
+{
+    KwIo *io = s->io;
+    if (s->sync_byte < 0 || !io->set_baud || !io->baud)
+        return 0;
+    int next = io->baud == 10400 ? 9600 : 10400;
+    if (io->set_baud(io->ctx, next) != 0)
+        return 0;
+    io->baud = next;
+    return 1;
+}
+
 static int wakeup(KwSession *s, int attempts)
 {
     int err = KW_ENOWAKE;
-    for (int attempt = 0; attempt < attempts; attempt++) {
+    int switched = 0;
+    for (int attempt = 0; attempt < attempts + switched; attempt++) {
         if (attempt > 0)
             sleep_ms(s->io, 1000);
         err = wakeup_once(s, 0);
-        if (err == KW_OK || err == KW_EKWP2000)
+        if (err == KW_OK || err == KW_EKWP2000) {
+            s->baud = s->io->baud;
             return err;
+        }
+        if (!switched)
+            switched = switch_baud(s);
     }
     return err;
 }

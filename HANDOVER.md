@@ -1,5 +1,18 @@
 # Handover: ESP32 VAG Scanner (macOS + ESP32-P4)
 
+## First real car: EuroVan engine at 10400 baud (2026-10-31)
+
+- The van's engine ECU is **022906032AF MOTRONIC ME7.1** (coding G 0003). It answers the
+  5 baud wake-up at **10400**, so at 9600 the sync byte reads `B5` and both apps said "No
+  response". Verified with the KKL cable on the Mac: ident, faults (17524, 17511, both 35-00)
+  and groups 1-5 read correctly at 10400. Groups 1/2/4/5 match the VW standard layout the
+  dashboard uses (group 4: 11.6 V, 86 °C coolant with the engine off).
+- `KwIo` now has optional `set_baud` and `baud`. A non-$55 sync byte makes `wakeup()` flip
+  9600 <-> 10400 and retry once (not counted as an attempt); the speed stays. Both backends
+  implement it; the P4 reopens the cable at the last working speed. The demo EuroVan's engine
+  answers only at 10400, so the switch is exercised by tests and demos.
+- Only the engine (01) has been talked to on the real car so far, at the owner's request.
+
 ## Dashboard (2026-10-31)
 
 - `kwcore/dashboard.c` is shared: presets, the read plan (each (address, group) once,
