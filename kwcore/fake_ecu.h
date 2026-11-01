@@ -38,6 +38,8 @@ typedef struct FakeEcu {
     /* options */
     int repeat_sync;          /* send $55 01 8A again before the first block */
     int live;                 /* vary measured values between reads */
+    int health_mode;          /* parked health scenario, clean simulated fault memory */
+    unsigned health_reads;   /* ATF warm-up, independent of the driving demo */
 
     /* results for tests */
     int errors;

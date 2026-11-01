@@ -1,6 +1,7 @@
 .DS_Store
 kwcore/kwcli
 kwcore/test_kw1281
+kwcore/test_health
 mac/.build/
 esp32/build/
 esp32/managed_components/

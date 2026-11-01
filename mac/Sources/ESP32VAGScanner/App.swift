@@ -31,9 +31,10 @@ final class AppModel: ObservableObject {
     @Published var baud = 9600
     @Published var modules: [Module] = []
     @Published var selection: Module? {
-        didSet { if selection != nil { showDashboard = false } }
+        didSet { if selection != nil { showDashboard = false; showHealth = false } }
     }
     @Published var showDashboard = CommandLine.arguments.contains("--dashboard")
+    @Published var showHealth = CommandLine.arguments.contains("--health")
     @Published var scanning = false
     @Published var scanned = false
     @Published var scanStatus = ""
@@ -171,7 +172,7 @@ final class AppModel: ObservableObject {
                     }
                     scanStatus = "\(modules.count) controllers found"
                 }
-                if autoDemo && !stayOnOverview && !showDashboard { selection = modules.first }
+                if autoDemo && !stayOnOverview && !showDashboard && !showHealth { selection = modules.first }
             } catch {
                 self.error = error.localizedDescription
                 scanStatus = ""
@@ -194,7 +195,9 @@ struct RootView: View {
                 .navigationSplitViewColumnWidth(min: 280, ideal: 300)
         } detail: {
             Group {
-                if model.showDashboard {
+                if model.showHealth {
+                    HealthChecksView().id(model.port)
+                } else if model.showDashboard {
                     DashboardView()
                 } else if let module = model.selection {
                     ModuleView(module: module).id(module.address)
@@ -217,6 +220,7 @@ struct Sidebar: View {
                 Button {
                     model.selection = nil
                     model.showDashboard = false
+                    model.showHealth = false
                 } label: {
                     Label("Overview", systemImage: "car.side")
                 }
@@ -225,12 +229,23 @@ struct Sidebar: View {
                 Button {
                     model.selection = nil
                     model.showDashboard = true
+                    model.showHealth = false
                 } label: {
                     Label("Dashboard", systemImage: "gauge.with.dots.needle.67percent")
                 }
                 .buttonStyle(.plain)
                 .padding(.vertical, 4)
                 .disabled(model.busy && !model.dashboard.running)
+                Button {
+                    model.selection = nil
+                    model.showDashboard = false
+                    model.showHealth = true
+                } label: {
+                    Label("Health checks", systemImage: "heart.text.square")
+                }
+                .buttonStyle(.plain)
+                .padding(.vertical, 4)
+                .disabled(model.busy)
             }
             if !model.modules.isEmpty {
                 Section("Controllers") {

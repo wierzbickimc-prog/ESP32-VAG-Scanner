@@ -71,6 +71,11 @@ All screenshots show the simulated EuroVan (demo mode).
 - Recognises a few specific cars from their part numbers (T4 EuroVan, Mk3 Golf) and shows a
   matching photo.
 - Demo mode with simulated cars, so you can try it without a car or cable.
+- **EuroVan health checks** on both apps: a guided 01P ATF level assistant,
+  AXK camshaft timing/chain assessment, misfire-counter monitoring and an ECU
+  supply-voltage check. Each shows its prerequisites, readings, limitations and
+  factory procedure source, and can save a local snapshot. See
+  [procedures and validation status](docs/health-checks.md).
 
 Connecting the cable does not start vehicle communication. Tap **Scan car** or a
 module card to begin; the ESP32 also stays idle if its display cannot initialize.
@@ -85,14 +90,23 @@ notation (for example, **17** means instruments).
 **Dashboard notes.** KW1281 talks to one controller at a time, and switching costs a 2–3 s
 wake-up. The dashboard reads each controller several times before switching, so slots on
 the engine update continuously while the transmission's ATF temperature updates every few
-seconds. The ATF preset uses **02, group 5, field 1** (Ross-Tech's general location; some
-transmissions use group 2 or 4). It has not been checked on a real EuroVan yet: open
-**02 Auto Trans → Live data**, find the temperature, and pin it to the slot if it differs.
+seconds. The ATF preset uses **02, group 5, field 1**, verified on the EuroVan's 01P.
+Some other transmissions use group 2 or 4: open **02 Auto Trans → Live data**,
+find the temperature, and pin it to the slot if it differs.
 The fuel estimate can't see overrun fuel cut-off, so calibrate it after a fill-up.
 
 KW1281 controllers store only a fault code and one status byte. There's no mileage,
 occurrence count or freeze-frame data; that arrived with KWP2000 and UDS, which this tool
 doesn't support.
+
+**Health checks.** Open **Health checks** in the Mac sidebar or **EuroVan health
+checks** on the P4 home screen. Choose a check, Start, then confirm the physical
+conditions for that run. The ATF assistant requires a cold start around 30°C or
+below and guides a physical overflow inspection at 35–45°C; the app cannot
+measure fluid level. Timing screening applies the verified AXK intake limits and
+shows the exhaust offset and difference as observations. It does not certify
+chain or guide condition. Checks are restricted to engine `022906032AF` and
+transmission `01P927733CG`; new health groups still await real-vehicle validation.
 
 ## Hardware
 
@@ -107,6 +121,7 @@ doesn't support.
 | [`kwcore/`](kwcore) | KW1281 protocol in plain C99, a simulated ECU, tests, and the `kwcli` command-line tool |
 | [`mac/`](mac) | SwiftUI app. It links `kwcore` through symlinks in `Sources/KWCore` |
 | [`esp32/`](esp32) | ESP-IDF project: USB host FTDI driver, LVGL UI. See [`esp32/README.md`](esp32/README.md) |
+| [`hardware/kline-dongle/`](hardware/kline-dongle) | Unbuilt ESP32-C3 K-line dongle prototype; circuit, PCB, and assembly notes. Dedicated firmware is pending |
 | [`assets/`](assets) | Car photos, measuring-block labels, and the scripts that build and fetch them |
 | [`kw1281test/`](https://github.com/gmenounos/kw1281test) | Submodule: the upstream C# tool this protocol code is checked against |
 | [`HANDOVER.md`](HANDOVER.md) | Design decisions, verified facts, and next steps |
@@ -136,6 +151,7 @@ swift run ESP32VAGScanner                   # pick the cable in the app
 swift run ESP32VAGScanner --demo            # straight into the simulated EuroVan
 swift run ESP32VAGScanner --demo=golf --overview
 swift run ESP32VAGScanner --demo --dashboard  # simulated EuroVan, dashboard running
+swift run ESP32VAGScanner --demo --health     # EuroVan health-check screen
 ```
 
 Direct-module integration tests use the simulated cars and require Xcode's XCTest framework:

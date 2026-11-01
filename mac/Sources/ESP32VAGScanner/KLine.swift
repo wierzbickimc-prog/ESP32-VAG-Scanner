@@ -183,6 +183,37 @@ final class KLine: @unchecked Sendable {
         }
     }
 
+    func runHealth(port: String, baud: Int, check: Int, stop: StopFlag,
+                   onFrame: @escaping @Sendable (KwHealthFrame) -> Void) async throws {
+        final class Context {
+            let stop: StopFlag
+            let demo: Bool
+            let onFrame: @Sendable (KwHealthFrame) -> Void
+            init(stop: StopFlag, demo: Bool, onFrame: @escaping @Sendable (KwHealthFrame) -> Void) {
+                self.stop = stop; self.demo = demo; self.onFrame = onFrame
+            }
+        }
+        try await run {
+            try self.ensureOpen(port: port, baud: baud)
+            if let demo = self.demoCar {
+                demo.pointee.health_mode = 1
+                demo.pointee.health_reads = 0
+            }
+            defer { self.demoCar?.pointee.health_mode = 0 }
+            let context = Unmanaged.passRetained(Context(stop: stop, demo: Self.isDemo(port), onFrame: onFrame))
+            defer { context.release() }
+            kw_health_run(self.session, self.io, Int32(check), { ctx, frame in
+                let c = Unmanaged<Context>.fromOpaque(ctx!).takeUnretainedValue()
+                if c.stop.isStopped { return 1 }
+                if let frame {
+                    c.onFrame(frame.pointee)
+                    if c.demo { Thread.sleep(forTimeInterval: 0.3) }
+                }
+                return c.stop.isStopped ? 1 : 0
+            }, context.toOpaque())
+        }
+    }
+
     func close() {
         queue.async { self.closePort() }
     }

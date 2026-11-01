@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "dashboard.h"
+#include "health.h"
 #include "fake_ecu.h"
 #include "kw1281.h"
 
@@ -23,6 +24,7 @@ typedef enum {
     KL_GROUP,
     KL_GROUP_LIVE,  /* repeats the group read in one session until kline_cancel() */
     KL_DASH,        /* reads `plan` round and round (kw_dash_run) until kline_cancel() */
+    KL_HEALTH,
 } kl_op_t;
 
 typedef struct {
@@ -32,6 +34,7 @@ typedef struct {
     FakeCar demo_car;
     KwDashRead plan[KW_DASH_PLAN_MAX];
     int plan_count;
+    int health_check;
 } kl_request_t;
 
 typedef enum {
@@ -41,6 +44,7 @@ typedef enum {
     KL_EV_FAULTS,       /* `count` codes in `faults`, or `err` */
     KL_EV_GROUP,        /* `count` values in `values` named by `labels`, or `err` */
     KL_EV_DASH,         /* dashboard read of `address` / `group`: `count` raw `sensors`, or `err` */
+    KL_EV_HEALTH,       /* complete read-only health frame; copy during callback */
     KL_EV_DONE,         /* request `op` finished (always sent last) */
 } kl_event_type_t;
 
@@ -60,6 +64,7 @@ typedef struct {
     const char *const *labels;
     int group;
     const SensorValue *sensors;
+    const KwHealthFrame *health;
 } kl_event_t;
 
 typedef void (*kl_callback_t)(const kl_event_t *event);

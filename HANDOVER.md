@@ -1,5 +1,38 @@
 # Handover: ESP32 VAG Scanner (macOS + ESP32-P4)
 
+## EuroVan health checks (2026-11-01)
+
+- Shared read-only runner and evaluator: `kwcore/health.c` / `health.h`.
+  Exact controller allowlists: engine `022906032AF`, transmission `01P927733CG`.
+  Chassis/photo recognition and generic petrol labels never select test limits.
+- Both apps expose ATF level assistance, AXK intake timing screening with
+  exhaust/difference observations, misfire-counter monitoring and ECU supply.
+  See `docs/health-checks.md` for factory sources, exact prerequisites, app sampling
+  policies, pending candidates and limitations. Mk3 Golf is out of scope.
+- AXK intake table was inspected as an image in the factory manual mirror:
+  650–1400 rpm, phase flank 118–134, adapted offset −8..+8 crank degrees,
+  status `XX1XX100`. Oil ≥80°C is a user-confirmed prerequisite; coolant is not
+  substituted. No unverified 3-degree intake/exhaust difference limit is applied.
+- ATF: start ≤30°C, physical inspection at 35–45°C, P, voltage ≥11.5 V,
+  level vehicle, idling engine, consumers off, fuses/grounds checked, no emergency
+  running mode. Readiness is not a measured fluid level. Physical observations
+  can only be recorded while live readiness is valid.
+- Mac: `HealthChecks.swift` / `HealthChecksView.swift`, sidebar entry and
+  `--demo --health`. Up to 30 local reports include controller, timestamp,
+  measurements, conditions, simulation flag, source and physical observation.
+- P4: `KL_HEALTH` / `KL_EV_HEALTH`, scrollable health screen, per-check NVS
+  snapshots, source QR and debug commands `health`, `health check 0..3`,
+  `health start`, `health stop`. K-line task stack is 16 KiB for complete health
+  frames plus nested protocol buffers. Uses libc float formatting, not LVGL printf.
+- Health demo is parked, with warm engine, initially cool ATF and clean simulated
+  fault memory. This does not clear the normal demo fixtures. On exit, ordinary
+  driving/fault behavior resumes. Health comparisons expire stale/invalid data;
+  zero misfire deltas never produce a pass without verified recognition status.
+- Verified: C protocol/health tests, 10 macOS integration tests, Mac demo screen
+  visual review, ESP-IDF build and host startup regression. No USB device connected
+  for this work; P4 touch and new real-vehicle health groups remain unverified.
+  Firmware was built, not flashed.
+
 ## Planned: 4.3" Guition JC4880P443C port (board ordered 2026-10-31)
 
 480x800 MIPI-DSI, ESP32-P4 + ESP32-C6. Reported GT911 touch; the panel controller (ST7701?)

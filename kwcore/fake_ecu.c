@@ -106,6 +106,11 @@ typedef struct {
 static Drive drive_state(FakeEcu *f)
 {
     Drive d = { 20, 0, 3.0, 190, 175 };
+    if (f->health_mode) {
+        d.atf_b = 125 + (int)(f->health_reads++ / 6);
+        if (d.atf_b > 150) d.atf_b = 150;
+        return d;
+    }
     if (!f->live)
         return d;
     unsigned t = f->drive++ % 240;
@@ -164,6 +169,15 @@ static int group_values(FakeEcu *f, int g, uint8_t *out)
             SV(2, 250, wobble(f, 85, 4));
             SV(7, 100, d.speed);
             SV(17, 'P', 'L');
+        } else if (f->health_mode && strstr(f->active->ident[0], "022906032AF") && (g == 208 || g == 209)) {
+            SV(1, 200, 20);
+            SV(54, 0, 130);
+            SV(9, 50, g == 208 ? 123 : 124); /* -4 / -3 crankshaft degrees */
+            SV(16, 0, g == 208 ? 0x24 : 0xB4);
+        } else if (f->health_mode && strstr(f->active->ident[0], "022906032AF") && g == 14) {
+            SV(1, 200, 20); SV(2, 250, 20); SV(54, 0, 0); SV(16, 0, 1);
+        } else if (f->health_mode && strstr(f->active->ident[0], "022906032AF") && (g == 15 || g == 16)) {
+            SV(54, 0, 0); SV(54, 0, 0); SV(54, 0, 0); SV(16, 0, 1);
         } else {
             return -1;
         }
@@ -315,16 +329,17 @@ static void handle_request(FakeEcu *f)
             m->fault_count = 0;
         uint8_t buf[24];
         int n = 0;
-        if (m->fault_count == 0) {
+        int fault_count = f->health_mode ? 0 : m->fault_count;
+        if (fault_count == 0) {
             uint8_t none[] = { 0xFF, 0xFF, 0x88 };
             queue_block(f, 0xFC, none, 3);
         }
         /* two codes per block, so multi-block replies get exercised */
-        for (int i = 0; i < m->fault_count; i++) {
+        for (int i = 0; i < fault_count; i++) {
             buf[n++] = (uint8_t)(m->faults[i].dtc >> 8);
             buf[n++] = (uint8_t)m->faults[i].dtc;
             buf[n++] = (uint8_t)m->faults[i].status;
-            if (n == 6 || i == m->fault_count - 1) {
+            if (n == 6 || i == fault_count - 1) {
                 queue_block(f, 0xFC, buf, n);
                 n = 0;
             }

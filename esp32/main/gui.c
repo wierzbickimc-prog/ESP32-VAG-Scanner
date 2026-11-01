@@ -287,6 +287,7 @@ static void set_card_status(module_t *m)
 
 static void open_module_index(int idx);
 static void on_dash_open(lv_event_t *e);
+static void on_health_open(lv_event_t *e);
 static void on_wifi_open(lv_event_t *e);
 static lv_obj_t *s_wifi_icon;
 static void on_value_tile(lv_event_t *e);
@@ -602,15 +603,19 @@ static void build_home(void)
     /* controllers */
     lv_obj_t *heading = text(s_home, &lv_font_montserrat_16, C_MUTED, "OPEN A MODULE");
     lv_obj_set_style_text_letter_space(heading, 3, 0);
-    lv_obj_set_pos(heading, 34, 588);
+    lv_obj_set_pos(heading, 34, 640);
     s_count_label = text(s_home, &lv_font_montserrat_16, C_MUTED, "");
-    lv_obj_align(s_count_label, LV_ALIGN_TOP_RIGHT, -34, 588);
+    lv_obj_align(s_count_label, LV_ALIGN_TOP_RIGHT, -34, 640);
+
+    lv_obj_t *health = button(s_home, "EuroVan health checks", C_SURFACE, C_TEXT, on_health_open, NULL);
+    lv_obj_set_size(health, 736, 64);
+    lv_obj_set_pos(health, 32, 570);
 
     s_grid = plain(s_home);
     lv_obj_set_scrollable(s_grid, true);
     lv_obj_set_scroll_dir(s_grid, LV_DIR_VER);
-    lv_obj_set_size(s_grid, 736, 548);
-    lv_obj_set_pos(s_grid, 32, 622);
+    lv_obj_set_size(s_grid, 736, 496);
+    lv_obj_set_pos(s_grid, 32, 674);
     lv_obj_set_flex_flow(s_grid, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_style_pad_row(s_grid, 16, 0);
     lv_obj_set_style_pad_column(s_grid, 16, 0);
@@ -1457,6 +1462,236 @@ static void build_dash(void)
     dash_set_running(false);
 }
 
+/* ---- EuroVan health checks ------------------------------------------------ */
+
+static lv_obj_t *s_health, *s_health_picker, *s_health_run_label, *s_health_status;
+static lv_obj_t *s_health_intro, *s_health_prep, *s_health_result_label, *s_health_values;
+static lv_obj_t *s_health_limits, *s_health_confirm[4], *s_health_saved;
+static lv_obj_t *s_health_save, *s_health_drip, *s_health_dry;
+static KwHealthState s_health_state;
+static KwHealthFrame s_health_frame;
+static KwHealthResult s_health_result;
+static int s_health_check;
+static unsigned s_health_confirmations;
+static bool s_health_running, s_health_have, s_health_demo;
+static double s_health_received;
+
+static void health_evaluate(void)
+{
+    if (!s_health_have) return;
+    double now = s_health_frame.finished_s + esp_timer_get_time() / 1e6 - s_health_received;
+    kw_health_evaluate(&s_health_state, &s_health_frame, s_health_confirmations, now, &s_health_result);
+    lv_label_set_text(s_health_result_label, s_health_result.message);
+    lv_obj_set_style_text_color(s_health_result_label, col(s_health_result.status == KW_HEALTH_ATTENTION ? C_ERR
+        : s_health_result.status == KW_HEALTH_READY || s_health_result.status == KW_HEALTH_WITHIN_LIMITS ? C_OK : C_WARN), 0);
+    label_printf(s_health_status, "%s%s%s | observed %.0f s", s_health_demo ? "SIMULATION | " : "",
+                 s_health_running ? "" : "Last sample | ",
+                 kw_health_status_name(s_health_result.status), s_health_result.observed_s);
+    lv_label_set_text(s_health_values, p4_text(s_health_result.readings));
+    bool ready = s_health_running && s_health_result.status == KW_HEALTH_READY;
+    lv_obj_set_state(s_health_drip, LV_STATE_DISABLED, !ready);
+    lv_obj_set_state(s_health_dry, LV_STATE_DISABLED, !ready);
+    lv_obj_set_state(s_health_save, LV_STATE_DISABLED, false);
+}
+
+static void health_timer(lv_timer_t *timer)
+{
+    (void)timer;
+    if (s_health_running) health_evaluate();
+}
+
+static void health_load_saved(void)
+{
+    char key[16], saved[2048];
+    snprintf(key, sizeof(key), "health%d", s_health_check);
+    nvs_handle_t h;
+    size_t len = sizeof(saved);
+    if (nvs_open("vagscanner", NVS_READONLY, &h) == ESP_OK) {
+        esp_err_t err = nvs_get_str(h, key, saved, &len);
+        nvs_close(h);
+        if (err == ESP_OK) { lv_label_set_text(s_health_saved, saved); return; }
+    }
+    lv_label_set_text(s_health_saved, "No saved snapshot for this check on this device.");
+}
+
+static void health_reset(void)
+{
+    const KwHealthProcedure *p = kw_health_procedure(s_health_check);
+    kw_health_init(&s_health_state, s_health_check);
+    s_health_confirmations = 0;
+    s_health_have = false;
+    memset(&s_health_frame, 0, sizeof(s_health_frame));
+    memset(&s_health_result, 0, sizeof(s_health_result));
+    s_health_result.status = KW_HEALTH_INCONCLUSIVE;
+    lv_label_set_text(s_health_intro, p->description);
+    lv_label_set_text(s_health_prep, p->preparation);
+    lv_label_set_text(s_health_limits, p->limitations);
+    lv_label_set_text(s_health_result_label, "Start to verify the controller, then confirm the prerequisites.");
+    lv_label_set_text(s_health_values, "");
+    lv_label_set_text(s_health_status, "EuroVan only | read-only procedures");
+    for (int i = 0; i < 4; i++) {
+        lv_obj_set_hidden(s_health_confirm[i], !p->confirmation[i]);
+        lv_obj_set_state(s_health_confirm[i], LV_STATE_CHECKED, false);
+        lv_obj_set_state(s_health_confirm[i], LV_STATE_DISABLED, true);
+        if (p->confirmation[i]) lv_checkbox_set_text(s_health_confirm[i], p->confirmation[i]);
+    }
+    lv_obj_set_state(s_health_save, LV_STATE_DISABLED, true);
+    lv_obj_set_state(s_health_drip, LV_STATE_DISABLED, true);
+    lv_obj_set_state(s_health_dry, LV_STATE_DISABLED, true);
+    health_load_saved();
+}
+
+static void on_health_pick(lv_event_t *e)
+{
+    (void)e;
+    if (s_health_running) return;
+    s_health_check = lv_dropdown_get_selected(s_health_picker);
+    health_reset();
+}
+
+static void on_health_confirm(lv_event_t *e)
+{
+    if (!s_health_running) return;
+    unsigned bit = 1u << (unsigned)(intptr_t)lv_event_get_user_data(e);
+    if (lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED)) s_health_confirmations |= bit;
+    else s_health_confirmations &= ~bit;
+    health_evaluate();
+}
+
+static void on_health_run(lv_event_t *e)
+{
+    (void)e;
+    if (s_health_running) { kline_cancel(); return; }
+    if (s_busy) return;
+    if (!s_cable && !s_demo) {
+        lv_label_set_text(s_health_status, "Connect a KKL cable or select the EuroVan demo first."); return;
+    }
+    health_reset();
+    s_health_demo = s_demo;
+    kl_request_t req = { .op = KL_HEALTH, .health_check = s_health_check };
+    if (!kline_submit(&req)) {
+        lv_label_set_text(s_health_status, "Cable task is busy. Try again."); return;
+    }
+    s_busy = s_health_running = true;
+    lv_obj_set_state(s_health_picker, LV_STATE_DISABLED, true);
+    for (int i = 0; i < 4; i++) lv_obj_set_state(s_health_confirm[i], LV_STATE_DISABLED, false);
+    lv_label_set_text(s_health_run_label, "Stop");
+    lv_label_set_text(s_health_status, "Connecting and verifying controller identity...");
+}
+
+static void on_health_back(lv_event_t *e)
+{
+    if (s_health_running) kline_cancel();
+    go_home(e);
+}
+
+static void on_health_open(lv_event_t *e)
+{
+    (void)e;
+    if (s_busy && !s_health_running) return;
+    lv_screen_load_anim(s_health, LV_SCREEN_LOAD_ANIM_MOVE_LEFT, 220, 0, false);
+}
+
+static void on_health_source(lv_event_t *e)
+{
+    (void)e;
+    const KwHealthProcedure *p = kw_health_procedure(s_health_check);
+    lv_obj_t *mbox = lv_msgbox_create(NULL);
+    lv_obj_set_width(mbox, 720);
+    lv_msgbox_add_title(mbox, "Factory procedure source");
+    lv_msgbox_add_text(mbox, p->source_title);
+    lv_obj_t *qr = lv_qrcode_create(lv_msgbox_get_content(mbox));
+    lv_qrcode_set_size(qr, 400);
+    lv_qrcode_set_dark_color(qr, lv_color_black());
+    lv_qrcode_set_light_color(qr, lv_color_white());
+    lv_qrcode_update(qr, p->source_url, strlen(p->source_url));
+    lv_msgbox_add_close_button(mbox);
+}
+
+static void on_health_save(lv_event_t *e)
+{
+    if (!s_health_have) return;
+    health_evaluate();
+    int observation = (int)(intptr_t)lv_event_get_user_data(e);
+    if (observation && (!s_health_running || s_health_result.status != KW_HEALTH_READY)) return;
+    const KwHealthProcedure *p = kw_health_procedure(s_health_check);
+    char saved[2048], key[16];
+    int n = snprintf(saved, sizeof(saved), "%s%s\n%s\n%s\n%s\n%s\n%s\nConfirmed by user:\n",
+        s_health_demo ? "SIMULATION | " : "", p->title, s_health_frame.ident,
+        kw_health_status_name(s_health_result.status), s_health_result.message, s_health_result.readings,
+        observation == 1 ? "User observed continued dripping after initial overflow-tube fluid."
+        : observation == 2 ? "User observed no further flow after initial overflow-tube fluid; topping up indicated."
+                           : "Snapshot only; no physical fluid-level observation recorded.");
+    for (int i = 0; i < 4 && n >= 0 && n < (int)sizeof(saved); i++)
+        if (p->confirmation[i] && (s_health_confirmations & (1u << i)))
+            n += snprintf(saved + n, sizeof(saved) - n, "- %s\n", p->confirmation[i]);
+    snprintf(key, sizeof(key), "health%d", s_health_check);
+    nvs_handle_t h;
+    esp_err_t err = nvs_open("vagscanner", NVS_READWRITE, &h);
+    if (err == ESP_OK) {
+        err = nvs_set_str(h, key, saved);
+        if (err == ESP_OK) err = nvs_commit(h);
+        nvs_close(h);
+    }
+    if (err == ESP_OK) health_load_saved();
+    else lv_label_set_text(s_health_saved, "Snapshot could not be saved. Try again.");
+}
+
+static lv_obj_t *health_paragraph(lv_obj_t *parent, const char *str)
+{
+    lv_obj_t *l = text(parent, &lv_font_montserrat_20, C_TEXT, str);
+    lv_obj_set_width(l, LV_PCT(100));
+    lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+    return l;
+}
+
+static void build_health(void)
+{
+    s_health = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_health, col(C_BG), 0);
+    lv_obj_set_scrollable(s_health, false);
+    round_button(s_health, LV_SYMBOL_LEFT, on_health_back);
+    lv_obj_t *title = text(s_health, &lv_font_montserrat_28, C_TEXT, "EuroVan health checks");
+    lv_obj_set_pos(title, 88, 30);
+    lv_obj_t *run = button(s_health, NULL, C_ACCENT, C_TEXT, on_health_run, NULL);
+    lv_obj_set_size(run, 130, 64); lv_obj_set_pos(run, 638, 20);
+    s_health_run_label = text(run, &lv_font_montserrat_24, C_TEXT, "Start");
+    lv_obj_center(s_health_run_label);
+
+    lv_obj_t *body = column(s_health, 20);
+    lv_obj_set_size(body, 736, 1130); lv_obj_set_pos(body, 32, 110);
+    lv_obj_set_scrollable(body, true); lv_obj_set_scroll_dir(body, LV_DIR_VER);
+    s_health_picker = lv_dropdown_create(body);
+    lv_obj_set_width(s_health_picker, LV_PCT(100));
+    lv_dropdown_set_options(s_health_picker, "ATF level assistant\nCamshaft timing / chain assessment\nMisfire activity\nECU supply voltage");
+    lv_obj_add_event_cb(s_health_picker, on_health_pick, LV_EVENT_VALUE_CHANGED, NULL);
+    s_health_intro = health_paragraph(body, "");
+    s_health_prep = health_paragraph(body, "");
+    s_health_status = health_paragraph(body, "");
+    s_health_result_label = health_paragraph(body, "");
+    s_health_values = health_paragraph(body, "");
+    for (int i = 0; i < 4; i++) {
+        s_health_confirm[i] = lv_checkbox_create(body);
+        lv_obj_set_width(s_health_confirm[i], LV_PCT(100));
+        lv_obj_set_style_pad_ver(s_health_confirm[i], 12, 0);
+        lv_obj_add_event_cb(s_health_confirm[i], on_health_confirm, LV_EVENT_VALUE_CHANGED, (void *)(intptr_t)i);
+    }
+    s_health_save = button(body, "Save snapshot", C_SURFACE2, C_TEXT, on_health_save, NULL);
+    s_health_drip = button(body, "Record continued dripping", C_SURFACE2, C_TEXT, on_health_save, (void *)1);
+    s_health_dry = button(body, "Record no further flow", C_SURFACE2, C_TEXT, on_health_save, (void *)2);
+    lv_obj_set_size(s_health_save, LV_PCT(100), 64);
+    lv_obj_set_size(s_health_drip, LV_PCT(100), 64);
+    lv_obj_set_size(s_health_dry, LV_PCT(100), 64);
+    s_health_limits = health_paragraph(body, "");
+    lv_obj_t *source = button(body, "Procedure source (QR)", C_SURFACE2, C_TEXT, on_health_source, NULL);
+    lv_obj_set_size(source, LV_PCT(100), 64);
+    health_paragraph(body, "Mixture, oxygen-sensor, warm-up and ABS checks await AXK/controller-specific verification. Basic Settings and actuator tests are outside these passive checks.");
+    health_paragraph(body, "Last saved snapshot on this device (replaced when you save this check again):");
+    s_health_saved = health_paragraph(body, "");
+    health_reset();
+    lv_timer_create(health_timer, 1000, NULL);
+}
+
 /* ---- Wi-Fi and the wiki viewer ------------------------------------------------ */
 
 /*
@@ -2032,8 +2267,24 @@ void gui_on_kline_event(const kl_event_t *ev)
     case KL_EV_DASH:
         dash_apply(ev);
         break;
+    case KL_EV_HEALTH:
+        if (s_health_running && ev->health) {
+            s_health_frame = *ev->health;
+            s_health_have = true;
+            s_health_received = esp_timer_get_time() / 1e6;
+            health_evaluate();
+        }
+        break;
     case KL_EV_DONE:
         s_busy = false;
+        if (ev->op == KL_HEALTH) {
+            s_health_running = false;
+            lv_label_set_text(s_health_run_label, "Start");
+            lv_obj_set_state(s_health_picker, LV_STATE_DISABLED, false);
+            for (int i = 0; i < 4; i++) lv_obj_set_state(s_health_confirm[i], LV_STATE_DISABLED, true);
+            health_evaluate();
+            if (!s_health_have) lv_label_set_text(s_health_status, "Stopped. Start again to collect live readings.");
+        }
         if (ev->op == KL_SCAN || ev->op == KL_DEMO)
             scan_finished();
         if (ev->op == KL_DASH) {
@@ -2073,6 +2324,7 @@ void gui_build(void)
     build_home();
     build_detail();
     build_dash();
+    build_health();
     build_wifi();
     build_wiki();
     build_credits();
@@ -2099,6 +2351,17 @@ void gui_debug(const char *cmd)
             open_module_index(ensure_module((uint8_t)address));
     } else if (strcmp(cmd, "modules") == 0) {
         on_more_modules(NULL);
+    } else if (strcmp(cmd, "health") == 0) {
+        on_health_open(NULL);
+    } else if (strncmp(cmd, "health check ", 13) == 0 && !s_busy) {
+        int check = atoi(cmd + 13);
+        if (check >= 0 && check < KW_HEALTH_COUNT) {
+            lv_dropdown_set_selected(s_health_picker, check);
+            on_health_pick(NULL);
+            on_health_open(NULL);
+        }
+    } else if (strcmp(cmd, "health start") == 0 || strcmp(cmd, "health stop") == 0) {
+        if ((strcmp(cmd, "health start") == 0) != s_health_running) on_health_run(NULL);
     } else if (strncmp(cmd, "open ", 5) == 0) {
         open_module_index(cmd[5] - '0');
     } else if (strcmp(cmd, "back") == 0) {

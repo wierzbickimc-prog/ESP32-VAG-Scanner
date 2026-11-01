@@ -21,6 +21,7 @@ idf_component_register(
         net.c
         ../../kwcore/car_profile.c
         ../../kwcore/dashboard.c
+        ../../kwcore/health.c
         ../../kwcore/fake_ecu.c
         ../../kwcore/fault_table.c
         ../../kwcore/kw1281.c

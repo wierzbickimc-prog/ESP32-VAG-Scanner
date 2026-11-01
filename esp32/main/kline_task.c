@@ -145,6 +145,24 @@ static void do_dash(const kl_request_t *req)
     kw_dash_run(&s_session, bus(), req->plan, req->plan_count, 6, on_dash_reading, NULL);
 }
 
+static int on_health_frame(void *ctx, const KwHealthFrame *frame)
+{
+    (void)ctx;
+    if (s_cancel) return 1;
+    if (frame) {
+        emit((kl_event_t){ .type = KL_EV_HEALTH, .op = KL_HEALTH, .health = frame });
+        demo_pause(300);
+    }
+    return s_cancel;
+}
+
+static void do_health(const kl_request_t *req)
+{
+    if (s_demo) { s_fake.health_mode = 1; s_fake.health_reads = 0; }
+    kw_health_run(&s_session, bus(), req->health_check, on_health_frame, NULL);
+    s_fake.health_mode = 0;
+}
+
 /* Opens the cable when it appears and reports changes. */
 static void poll_cable(bool *was_connected)
 {
@@ -196,7 +214,10 @@ static void kline_task(void *arg)
             /* no cable: answer with an error so the UI isn't left waiting */
             if (req.op == KL_FAULTS || req.op == KL_CLEAR)
                 emit((kl_event_t){ .type = KL_EV_FAULTS, .op = req.op, .address = req.address, .err = KW_ENOWAKE });
-            else if (req.op == KL_DASH)
+            else if (req.op == KL_HEALTH) {
+                KwHealthFrame frame = { .check = req.health_check, .err = KW_ENOWAKE };
+                emit((kl_event_t){ .type = KL_EV_HEALTH, .op = req.op, .health = &frame });
+            } else if (req.op == KL_DASH)
                 emit((kl_event_t){ .type = KL_EV_DASH, .op = req.op, .err = KW_ENOWAKE });
             else
                 emit((kl_event_t){ .type = KL_EV_GROUP, .address = req.address, .err = KW_ENOWAKE });
@@ -204,6 +225,8 @@ static void kline_task(void *arg)
             do_faults(&req);
         } else if (req.op == KL_DASH) {
             do_dash(&req);
+        } else if (req.op == KL_HEALTH) {
+            do_health(&req);
         } else {
             do_group(&req);
         }
@@ -217,11 +240,16 @@ void kline_start(kl_callback_t callback)
     s_queue = xQueueCreate(4, sizeof(kl_request_t));
     ftdi_usb_start();
     /* Above LVGL so K-line timing wins; the task blocks between bytes. */
-    xTaskCreate(kline_task, "kline", 8192, NULL, 6, NULL);
+    /* Health captures include faults + four groups; protocol reads have their
+     * own block buffers on the stack. */
+    xTaskCreate(kline_task, "kline", 16384, NULL, 6, NULL);
 }
 
 bool kline_submit(const kl_request_t *request)
 {
+    /* Arm before enqueueing so an immediate Stop cannot be lost when the
+     * worker begins this request. The GUI submits only while idle. */
+    if (request->op == KL_HEALTH) s_cancel = false;
     return xQueueSend(s_queue, request, 0) == pdTRUE;
 }
 
