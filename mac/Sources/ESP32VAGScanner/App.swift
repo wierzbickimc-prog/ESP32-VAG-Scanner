@@ -150,7 +150,7 @@ final class AppModel: ObservableObject {
         moduleStatus = [:]
         moduleErrors = [:]
         carChosenByHand = false
-        let addresses = all ? Array(1...0x7F) : commonAddresses
+        let addresses = (all ? Array(1...0x7F) : commonAddresses).filter { !manualOnlyAddresses.contains($0) }
         Task {
             do {
                 modules = try await kline.scan(port: port, baud: baud, addresses: addresses, stop: stop) { address in

@@ -17,8 +17,10 @@
 #include <string.h>
 #include <unistd.h>
 
+/* Scans never wake 15 (airbag); read it directly with ident/faults 15. */
+#define AIRBAG 0x15
 static const uint8_t COMMON_ADDRESSES[] = {
-    0x01, 0x02, 0x03, 0x08, 0x09, 0x15, 0x16, 0x17, 0x19, 0x25,
+    0x01, 0x02, 0x03, 0x08, 0x09, 0x16, 0x17, 0x19, 0x25,
     0x35, 0x36, 0x37, 0x45, 0x46, 0x55, 0x56, 0x57,
 };
 
@@ -26,7 +28,7 @@ static void usage(const char *argv0)
 {
     fprintf(stderr,
             "Usage: %s [-b BAUD] PORT COMMAND [ARGS]\n"
-            "  scan [all]              probe common addresses (or 01-7F)\n"
+            "  scan [all]              probe common addresses (or 01-7F), never 15\n"
             "  ident ADDR              controller identification\n"
             "  faults ADDR             read fault codes\n"
             "  clear ADDR              clear fault codes\n"
@@ -85,6 +87,8 @@ static int do_scan(KwIo *io, int all)
 
     for (int i = 0; i < count; i++) {
         int addr = all ? i + 1 : COMMON_ADDRESSES[i];
+        if (addr == AIRBAG)
+            continue;
         fprintf(stderr, "probing %02X...\r", addr);
         int err = kw_connect_attempts(&s, io, (uint8_t)addr, 1);
         if (err == KW_OK) {
