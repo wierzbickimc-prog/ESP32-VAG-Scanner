@@ -29,9 +29,14 @@ below is their hardware interface.
 - Kept from revision 2: Q1/R10/R11 hold the K-line released while the ESP32 is off
   or resetting; U6 is the 5 V-tolerant RX buffer; D2 is SMBJ18CA.
 
-## Assembly by Seeed Studio
+## Assembly
 
-Seeed supplies and assembles the complete populated board, including U1, the XIAO
+**JLCPCB (cheaper, about $50–55 for 5 boards before shipping).** JLCPCB solders all
+the surface-mount parts from its own stock; you then solder the XIAO, the converter
+and the OBD wires. See [JLCPCB instructions](JLC-ASSEMBLY.md). The BOM below uses
+parts JLCPCB stocks, so the same files serve both routes.
+
+**Seeed Studio (about $300+ for 5).** Seeed supplies and assembles the complete populated board, including U1, the XIAO
 and the antenna attachment. You only wire the OBD cable and fit the case. **J1 stays
 unpopulated** as four plated wire holes. See [Seeed upload instructions](SEEED-ASSEMBLY.md)
 and the [factory assembly/test notes](FACTORY-NOTES.md).
@@ -90,7 +95,7 @@ python3 render.py board.glb                # renders/*.png
 | `gen/build_sch.py`, `gen/build_pcb.py` | Schematic and PCB generators |
 | `gen/check_export.py` | ERC, DRC/parity, Seeed BOM/CPL and upload ZIPs |
 | `enclosure/` | Case generator, STLs and renders |
-| `SEEED-ASSEMBLY.md`, `FACTORY-NOTES.md` | Upload and factory assembly/test instructions |
+| `JLC-ASSEMBLY.md`, `SEEED-ASSEMBLY.md`, `FACTORY-NOTES.md` | Upload and factory assembly/test instructions |
 | `build/` | Generated reports and manufacturing files; ignored by Git |
 
 Run from this directory:
@@ -113,7 +118,7 @@ regeneration; a completed route is not electrical validation.
 
 ## Bill of materials
 
-Use the exact ICs/packages specified; AHCT, LVC and LIN devices are not
+Part numbers and LCSC/JLCPCB numbers are in `gen/parts.py`. Use the exact ICs/packages specified; AHCT, LVC and LIN devices are not
 interchangeable. `build/fabrication/bom-detail.csv` includes references and datasheets.
 
 | Ref | Part / specification | Package | Notes |
@@ -123,21 +128,21 @@ interchangeable. `build/fabrication/bom-detail.csv` includes references and data
 | U3 | TI SN74AHCT1G125DBVR | SOT-23-5 | TX level shift |
 | U4 | Seeed XIAO ESP32C3 | Castellated module | Include its external U.FL antenna |
 | U6 | TI SN74LVC1G17DCKR | SC70-5 | 5 V tolerant RX buffer, Ioff protection |
-| F1 | Bourns MF-MSMF050/60X-2 | 1812 | 0.5 A hold, 60 V, maximum fault current 10 A |
-| D1 | SS16, 60 V / 1 A | SMA | Reverse polarity |
-| D2 | Diodes Inc. SMBJ18CA | SMB | 18 V bidirectional TVS, 29.2 V maximum clamp |
+| F1 | BHFUSE BSMD1812-050-60V (or Bourns MF-MSMF050/60X-2) | 1812 | PTC, 0.5 A hold, 60 V |
+| D1 | SS14, 40 V / 1 A | SMA | Reverse polarity; D2 keeps it below 30 V |
+| D2 | SMBJ18CA | SMB | 18 V bidirectional TVS, 29.2 V maximum clamp |
 | D3 | B5819WS, 40 V / 1 A | SOD-323 | Keeps USB VBUS out of the converter |
 | D5 | Green LED | 0603 | Status |
-| Q1 | Diodes Inc. BSS138-7-F | SOT-23 | TX buffer enable: pad 1 gate, 2 source, 3 drain |
-| R1 | 510 Ω, 1 W | 2512 | K-line pull-up; about 0.5 W with 16 V across it |
+| Q1 | 2N7002 (or BSS138) | SOT-23 | TX buffer enable: pad 1 gate, 2 source, 3 drain |
+| R1 | 510 Ω, 5%, 1 W | 2512 | K-line pull-up; about 0.5 W with 16 V across it |
 | R3, R7, R10 | 10 kΩ, 1% | 0603 | |
 | R4 | 1 kΩ, 1% | 0603 | |
 | R6 | 100 kΩ, 1% | 0603 | Battery divider, upper |
 | R11 | 100 kΩ, 1% | 0603 | Q1 gate pull-down |
 | C1 | 10 µF, 50 V, X7R | 1210 | |
 | C2 | 100 nF, 50 V, X7R | 0603 | U2 VS decoupling |
-| C3 | 10 µF, 10 V, X7R | 0805 | Converter output |
-| C4, C5, C6, C8 | 100 nF, 25 V, X7R | 0603 | Decoupling / ADC filter |
+| C3 | 10 µF, 25 V, X5R | 0805 | Converter output |
+| C4, C5, C6, C8 | 100 nF, 50 V, X7R | 0603 | Decoupling / ADC filter |
 | J1 | Bare wire holes; no header | 2.54 mm through-hole | OBD pigtail wires: 16, 4, 5, 7 |
 | TP1–TP8 | PCB copper only | Back-side 1 mm pads | No purchased component |
 

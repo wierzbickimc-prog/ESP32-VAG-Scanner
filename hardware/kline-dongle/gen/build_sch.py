@@ -5,7 +5,7 @@ reads as a netlist and stays in step with build_pcb.py (same PARTS, same UUIDs).
 """
 import math, os, sys, uuid, datetime
 sys.path.insert(0, os.path.dirname(__file__))
-from parts import PARTS, SYMBOLS, TWO_PIN_NAMES, PIN_TYPES, DATASHEETS, DNP, PROCUREMENT
+from parts import PARTS, SYMBOLS, TWO_PIN_NAMES, PIN_TYPES, DATASHEETS, DNP, PROCUREMENT, LCSC
 
 HERE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 NS = uuid.UUID("6b1c3a52-9a51-4c8e-9f0e-2f1f0b0d0e11")
@@ -176,7 +176,8 @@ for ref, symname, val, fp, netmap, _, desc in PARTS:
         sch.append(f"    (property {q(k)} {q(v)} (at {f(pos[0])} {f(pos[1])} 0) {eff})")
     if ref in PROCUREMENT:
         manufacturer, mpn, part_link = PROCUREMENT[ref]
-        for key, value in [("Manufacturer", manufacturer), ("MPN", mpn), ("Part Link", part_link)]:
+        for key, value in [("Manufacturer", manufacturer), ("MPN", mpn), ("Part Link", part_link),
+                           ("LCSC", LCSC.get(ref, ""))]:
             sch.append(f"    (property {q(key)} {q(value)} (at {f(X)} {f(Y)} 0) {FONT_HIDE})")
     for num, *_ in pins:
         sch.append(f"    (pin {q(num)} (uuid {q(str(uuid.uuid5(NS, su + num)))}))")

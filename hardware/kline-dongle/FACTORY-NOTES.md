@@ -34,7 +34,7 @@ validation remain separate from these static acceptance tests.
 - D1 and D3: pad 1 is cathode. D5: pad 1 is LED cathode. D2 is bidirectional.
   Use the manufacturer pinout as well as markings; do not infer polarity from
   the rotation column alone. U2 pin 1 is RX; U3 pin 1 is /OE; U6 pin 1 is NC.
-- Q1 BSS138: pad 1 gate, pad 2 source/GND, pad 3 drain/TX_OE_N. Q1/R10/R11 keep
+- Q1 2N7002: pad 1 gate, pad 2 source/GND, pad 3 drain/TX_OE_N. Q1/R10/R11 keep
   U3 disabled when the MCU is off or reset. Do not bridge U3 /OE to ground.
 - After soldering, attach the external U.FL antenna included with U4. Confirm it
   is included in the quoted module supply; do not charge/source it twice. Pack

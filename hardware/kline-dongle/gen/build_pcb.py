@@ -7,7 +7,7 @@ import heapq, itertools, math, os, sys, uuid, tempfile
 sys.path.insert(0, os.path.dirname(__file__))
 import pcbnew, wx
 app = wx.App(False)  # KiCad 10 geometry / font services need a wx application
-from parts import PARTS, SYMBOLS, FP, HERE, DATASHEETS, DNP, PROCUREMENT
+from parts import PARTS, SYMBOLS, FP, HERE, DATASHEETS, DNP, PROCUREMENT, LCSC
 from place import PLACE, REF_OFFSET, BOARD_W, BOARD_H, GND_STITCH
 
 OUT = os.path.join(os.path.dirname(__file__), "..", "kline-dongle.kicad_pcb")
@@ -73,7 +73,8 @@ for ref, sym, val, fp, pins, _, desc in PARTS:
     m.SetField("Datasheet", DATASHEETS.get(ref, ""))
     if ref in PROCUREMENT:
         manufacturer, mpn, part_link = PROCUREMENT[ref]
-        for key, value in [("Manufacturer", manufacturer), ("MPN", mpn), ("Part Link", part_link)]:
+        for key, value in [("Manufacturer", manufacturer), ("MPN", mpn), ("Part Link", part_link),
+                           ("LCSC", LCSC.get(ref, ""))]:
             m.SetField(key, value)
             m.GetField(key).SetVisible(False)
     if ref in DNP:

@@ -1,4 +1,4 @@
-"""Validate the actual KiCad files and build Seeed Fusion PCBA upload artifacts.
+"""Validate the actual KiCad files and build Seeed Fusion and JLCPCB PCBA upload artifacts.
 
 Run with normal Python 3; pcbnew is not required. No files are submitted online.
 """
@@ -6,13 +6,14 @@ import csv
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import zipfile
 
-from parts import HERE, PROCUREMENT
+from parts import HERE, PROCUREMENT, LCSC, PARTS
 from place import BOARD_H
 
 CLI = os.environ.get("KICAD_CLI") or shutil.which("kicad-cli")
@@ -32,6 +33,20 @@ def run(*args):
     result = subprocess.run([CLI, *map(str, args)], cwd=HERE)
     if result.returncode:
         raise SystemExit(f"KiCad {' '.join(map(str, args[:2]))} failed (exit {result.returncode}); inspect build/ reports. No new package exported.")
+
+
+# JLCPCB's part models are not all oriented like KiCad's. Corrections by footprint name,
+# confirmed in JLCPCB's placement preview on 2026-11-01 (SOT-23 here also covers SOT-23-5;
+# JLCKicadTools' older -90 for it was a quarter-turn off). Still check the preview.
+JLC_ROTATION = [(r"^SOT-23", 180), (r"^SOT-353", 180), (r"^SOIC-", 270)]
+# Hand-soldered after delivery: not stocked by JLCPCB, or through-hole.
+JLC_HAND = {"U1", "U4"}
+
+
+def jlc_rotation(footprint, rot):
+    name = footprint.split(":")[-1]
+    extra = next((r for pattern, r in JLC_ROTATION if re.match(pattern, name)), 0)
+    return (float(rot) + extra) % 360
 
 
 def read_csv(path):
@@ -118,19 +133,43 @@ with tempfile.TemporaryDirectory(prefix="kline-export-", dir=BUILD) as temporary
                 raise SystemExit("Review coordinate convention before adding bottom-side components")
             writer.writerow([p["Ref"], f'{float(p["PosX"]):.6f}',
                              f'{BOARD_H + float(p["PosY"]):.6f}', p["Rot"], "Top"])
+
+    # JLCPCB: BOM keyed by LCSC number; CPL with JLC's headers and rotation corrections.
+    footprints = {ref: fp for ref, _, _, fp, *_ in PARTS}
+    values = {ref: val for ref, _, val, *_ in PARTS}
+    jlc_refs = expected - JLC_HAND
+    if set(LCSC) != jlc_refs:
+        raise SystemExit(f"LCSC numbers missing or extra: {sorted(set(LCSC) ^ jlc_refs)}")
+    groups = {}
+    for ref in sorted(jlc_refs, key=lambda r: (re.sub(r"\d", "", r), int(re.sub(r"\D", "", r)))):
+        groups.setdefault((values[ref], footprints[ref].split(":")[-1], LCSC[ref]), []).append(ref)
+    with (stage / "jlc-bom.csv").open("w", newline="") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(["Comment", "Designator", "Footprint", "JLCPCB Part #"])
+        for (value, footprint, lcsc), refs in groups.items():
+            writer.writerow([value, ",".join(refs), footprint, lcsc])
+    with (stage / "jlc-cpl.csv").open("w", newline="") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(["Designator", "Mid X", "Mid Y", "Layer", "Rotation"])
+        for p in smt:
+            if p["Ref"] in JLC_HAND:
+                continue
+            # Same origin as the Gerbers (board spans y -24..0), so JLCPCB's overlay lines up.
+            writer.writerow([p["Ref"], f'{float(p["PosX"]):.4f}mm', f'{float(p["PosY"]):.4f}mm',
+                             "Top", f'{jlc_rotation(footprints[p["Ref"]], p["Rot"]):g}'])
     with (stage / "accessories-to-quote.csv").open("w", newline="") as stream:
         writer = csv.writer(stream)
         writer.writerow(["Item", "Manufacturer", "MPN", "Qty per PCBA", "Instruction", "Link"])
         writer.writerow(["External antenna", "Seeed Studio", "Included with U4 / SKU 113991054", 1,
                          "Attach to U4 after soldering; do not purchase twice; quote inclusion explicitly", PROCUREMENT["U4"][2]])
 
-    for name in ("SEEED-ASSEMBLY.md", "FACTORY-NOTES.md", "README.md"):
+    for name in ("SEEED-ASSEMBLY.md", "JLC-ASSEMBLY.md", "FACTORY-NOTES.md", "README.md"):
         shutil.copyfile(HERE / name, stage / name)
     for report in ("erc.json", "drc.json"):
         shutil.copyfile(BUILD / report, stage / report)
     inputs = [SCH, PCB, HERE / "kline-dongle.kicad_pro", HERE / "dongle.kicad_sym",
               HERE / "sym-lib-table", HERE / "fp-lib-table", HERE / "README.md",
-              HERE / "SEEED-ASSEMBLY.md", HERE / "FACTORY-NOTES.md"]
+              HERE / "SEEED-ASSEMBLY.md", HERE / "JLC-ASSEMBLY.md", HERE / "FACTORY-NOTES.md"]
     inputs += sorted((HERE / "gen").glob("*.py"))
     inputs += sorted((HERE / "dongle.pretty").glob("*.kicad_mod"))
     manifest = {
@@ -150,9 +189,10 @@ with tempfile.TemporaryDirectory(prefix="kline-export-", dir=BUILD) as temporary
         for p in sorted(gerbers.iterdir()):
             if p.suffix in (".gtl", ".gbl", ".gts", ".gbs", ".gto", ".gbo", ".gtp", ".gko", ".txt"):
                 archive.write(p, p.name)
+    shutil.copyfile(stage / "seeed-gerbers.zip", stage / "jlc-gerbers.zip")  # JLCPCB reads the same set
     with zipfile.ZipFile(stage / "seeed-assembly-support.zip", "w", zipfile.ZIP_DEFLATED) as archive:
         for p in sorted(stage.iterdir()):
-            if p.is_file() and p.suffix != ".zip":
+            if p.is_file() and p.suffix != ".zip" and not p.name.startswith("jlc-"):
                 archive.write(p, p.name)
         for p in sorted(gerbers.glob("*.pdf")):
             archive.write(p, p.name)
@@ -160,4 +200,4 @@ with tempfile.TemporaryDirectory(prefix="kline-export-", dir=BUILD) as temporary
     if destination.exists():
         shutil.rmtree(destination)  # exclusively generated by this script
     shutil.move(str(stage), destination)
-print(f"Checks passed; Seeed quote/upload package: {BUILD / 'fabrication'}")
+print(f"Checks passed; Seeed and JLCPCB upload packages: {BUILD / 'fabrication'}")
