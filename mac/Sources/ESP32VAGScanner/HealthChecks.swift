@@ -138,7 +138,8 @@ final class HealthChecks: ObservableObject {
         reevaluate()
         guard let date = sampledAt else { return }
         if physicalObservation != nil {
-            guard running, result.status == Int32(KW_HEALTH_READY.rawValue) else { return }
+            guard check == Int(KW_HEALTH_ATF.rawValue), running,
+                  result.status == Int32(KW_HEALTH_READY.rawValue) else { return }
         }
         reports.insert(HealthReport(date: date, check: String(cString: procedure.title),
             controller: controller, demo: demo, status: resultStatus,

@@ -1558,7 +1558,8 @@ static void health_evaluate(void)
                  s_health_running ? "" : "Last sample | ",
                  kw_health_status_name(s_health_result.status), s_health_result.observed_s);
     lv_label_set_text(s_health_values, p4_text(s_health_result.readings));
-    bool ready = s_health_running && s_health_result.status == KW_HEALTH_READY;
+    bool ready = s_health_check == KW_HEALTH_ATF
+        && s_health_running && s_health_result.status == KW_HEALTH_READY;
     lv_obj_set_state(s_health_drip, LV_STATE_DISABLED, !ready);
     lv_obj_set_state(s_health_dry, LV_STATE_DISABLED, !ready);
     lv_obj_set_state(s_health_save, LV_STATE_DISABLED, false);
@@ -1606,6 +1607,8 @@ static void health_reset(void)
         if (p->confirmation[i]) lv_checkbox_set_text(s_health_confirm[i], p->confirmation[i]);
     }
     lv_obj_set_state(s_health_save, LV_STATE_DISABLED, true);
+    lv_obj_set_hidden(s_health_drip, s_health_check != KW_HEALTH_ATF);
+    lv_obj_set_hidden(s_health_dry, s_health_check != KW_HEALTH_ATF);
     lv_obj_set_state(s_health_drip, LV_STATE_DISABLED, true);
     lv_obj_set_state(s_health_dry, LV_STATE_DISABLED, true);
     health_load_saved();
@@ -1683,7 +1686,8 @@ static void on_health_save(lv_event_t *e)
     if (!s_health_have) return;
     health_evaluate();
     int observation = (int)(intptr_t)lv_event_get_user_data(e);
-    if (observation && (!s_health_running || s_health_result.status != KW_HEALTH_READY)) return;
+    if (observation && (s_health_check != KW_HEALTH_ATF
+        || !s_health_running || s_health_result.status != KW_HEALTH_READY)) return;
     const KwHealthProcedure *p = kw_health_procedure(s_health_check);
     char saved[2048], key[16];
     int n = snprintf(saved, sizeof(saved), "%s%s\n%s\n%s\n%s\n%s\n%s\nConfirmed by user:\n",
@@ -1691,7 +1695,8 @@ static void on_health_save(lv_event_t *e)
         kw_health_status_name(s_health_result.status), s_health_result.message, s_health_result.readings,
         observation == 1 ? "User observed continued dripping after initial overflow-tube fluid."
         : observation == 2 ? "User observed no further flow after initial overflow-tube fluid; topping up indicated."
-                           : "Snapshot only; no physical fluid-level observation recorded.");
+        : s_health_check == KW_HEALTH_ATF ? "Snapshot only; no physical fluid-level observation recorded."
+                                         : "Snapshot only.");
     for (int i = 0; i < 4 && n >= 0 && n < (int)sizeof(saved); i++)
         if (p->confirmation[i] && (s_health_confirmations & (1u << i)))
             n += snprintf(saved + n, sizeof(saved) - n, "- %s\n", p->confirmation[i]);

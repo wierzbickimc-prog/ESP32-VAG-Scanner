@@ -68,7 +68,8 @@ struct HealthChecksView: View {
                         Text("Controller: \(health.controller)").font(.caption).textSelection(.enabled)
                         Text("Sampled \(sampledAt.formatted(date: .abbreviated, time: .standard)) · Observation \(Int(health.result.observed_s)) s")
                             .font(.caption).foregroundStyle(Color.textMuted)
-                        if health.running && health.result.status == Int32(KW_HEALTH_READY.rawValue) {
+                        if health.check == Int(KW_HEALTH_ATF.rawValue)
+                            && health.running && health.result.status == Int32(KW_HEALTH_READY.rawValue) {
                             HStack {
                                 Button("Record continued dripping") {
                                     health.save(physicalObservation: "User observed continued dripping after the initial overflow-tube fluid.")
