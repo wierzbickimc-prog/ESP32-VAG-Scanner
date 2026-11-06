@@ -24,6 +24,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Test installer packaging
+        run: python3 assets/tools/test_package_installer.py
+
       - name: Fetch the fault type names (GPL-3.0)
         run: python3 assets/tools/fetch_fault_types.py
 
@@ -46,12 +49,7 @@ jobs:
           mkdir -p site
           cp web/index.html site/
           cp esp32/build/esp32-vag-scanner-p4.bin site/
-          python3 - "$version" <<'EOF'
-          import json, sys
-          m = json.load(open("web/manifest.json"))
-          m["version"] = sys.argv[1]
-          json.dump(m, open("site/manifest.json", "w"), indent=2)
-          EOF
+          python3 assets/tools/package_installer.py site/esp32-vag-scanner-p4.bin "$version" site
           echo "Firmware $version: $(stat -c %s site/esp32-vag-scanner-p4.bin) bytes" >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4

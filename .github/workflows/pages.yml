@@ -38,12 +38,7 @@ jobs:
           mkdir -p site
           gh release download "$tag" --pattern esp32-vag-scanner-p4.bin --dir site
           cp web/index.html site/
-          python3 - "$tag" <<'PY'
-          import json, sys
-          m = json.load(open("web/manifest.json"))
-          m["version"] = sys.argv[1]
-          json.dump(m, open("site/manifest.json", "w"), indent=2)
-          PY
+          python3 assets/tools/package_installer.py site/esp32-vag-scanner-p4.bin "$tag" site
           echo "Published $tag" >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-pages-artifact@v3
