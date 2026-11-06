@@ -114,8 +114,11 @@ static void test_no_answer(void)
     uint64_t t = f.now;
     CHECK(kw_connect(&s, &io, 0x02) == KW_ENOWAKE);
     CHECK(s.sync_byte == -1);
-    /* 3 attempts of ~2.3 s + 2 s timeout, 1 s apart */
+    /* Three attempts plus four additional speed probes, all bounded. */
     CHECK(f.now - t > 3 * 4000000ull);
+    CHECK(f.wake_attempts == 7);
+    CHECK(f.now - t < 40000000ull);
+    CHECK(io.addr_baud[2] == 0);
     CHECK(f.errors == 0);
 }
 
@@ -306,6 +309,79 @@ static void test_baud_switch(void)
     CHECK(f.errors == 0);
 }
 
+static int trace_timeouts, trace_ready;
+static void capture_trace(void *ctx, const char *message)
+{
+    (void)ctx;
+    if (strstr(message, "sync=timeout")) trace_timeouts++;
+    if (strstr(message, "address=02 phase=ready")
+        && strstr(message, "baud=1200 cached=1200 sync=55 err=0")) trace_ready++;
+}
+
+static int reject_9600(void *ctx, int baud)
+{
+    if (baud == 9600) return -1;
+    FakeEcu *f = ctx;
+    f->baud = baud;
+    f->baud_switches++;
+    return 0;
+}
+
+static void test_silent_baud_discovery(void)
+{
+    FakeEcu f;
+    KwIo io;
+    KwSession s;
+    fake_ecu_init_car(&f, &io, FAKE_CAR_EUROVAN);
+    f.silent_wrong_baud = 1;
+    io.baud = f.baud = 10400; /* dashboard arrives from the engine */
+    io.trace = capture_trace;
+    trace_timeouts = trace_ready = 0;
+
+    /* A single-attempt scan stays cheap even when the wrong speed is silent. */
+    CHECK(kw_connect_attempts(&s, &io, 2, 1) == KW_ENOWAKE);
+    CHECK(f.wake_attempts == 1 && f.baud_switches == 0);
+    CHECK(io.addr_baud[2] == 0);
+    int before = f.wake_attempts;
+    CHECK(kw_connect(&s, &io, 2) == KW_OK);
+    CHECK(f.wake_attempts - before == 7);
+    CHECK(s.baud == 1200 && io.addr_baud[2] == 1200);
+    CHECK(trace_timeouts > 0 && trace_ready == 1);
+    kw_end(&s);
+
+    /* A stale cached speed can recover too. */
+    io.addr_baud[2] = 9600;
+    before = f.wake_attempts;
+    CHECK(kw_connect(&s, &io, 2) == KW_OK);
+    CHECK(io.addr_baud[2] == 1200 && f.wake_attempts - before <= 7);
+    kw_end(&s);
+    CHECK(f.errors == 0);
+
+    /* A single lost wake-up retries the current rate before hunting speeds. */
+    fake_ecu_init(&f, &io);
+    f.drop_wakeups = 1;
+    CHECK(kw_connect(&s, &io, 1) == KW_OK);
+    CHECK(f.wake_attempts == 2 && f.baud_switches == 0);
+    kw_end(&s);
+
+    /* Backends without speed switching retain bounded same-speed retries. */
+    fake_ecu_init_car(&f, &io, FAKE_CAR_EUROVAN);
+    f.silent_wrong_baud = 1;
+    io.set_baud = NULL;
+    CHECK(kw_connect(&s, &io, 2) == KW_ENOWAKE);
+    CHECK(f.wake_attempts == 3 && io.addr_baud[2] == 0);
+
+    /* Rejecting one candidate rate must not prevent trying a supported one. */
+    fake_ecu_init_car(&f, &io, FAKE_CAR_EUROVAN);
+    f.silent_wrong_baud = 1;
+    io.baud = f.baud = 10400;
+    io.set_baud = reject_9600;
+    CHECK(kw_connect(&s, &io, 2) == KW_OK);
+    CHECK(io.baud == 1200 && f.wake_attempts <= 7);
+    kw_end(&s);
+    CHECK(f.errors == 0);
+}
+
 static void test_wikitext(void)
 {
     static const char page[] =
@@ -347,6 +423,7 @@ static void test_wikitext(void)
 
 typedef struct {
     int count, stop_after;
+    int connecting, stop_on_connect;
     int per_address[256];
     int errors;
     double coolant, atf;
@@ -356,6 +433,11 @@ typedef struct {
 static int dash_cb(void *ctx, const KwDashReading *r)
 {
     DashLog *log = ctx;
+    if (r->state == KW_DASH_CONNECTING) {
+        log->connecting++;
+        CHECK(r->count == 0 && r->values == NULL);
+        return log->stop_on_connect;
+    }
     if (log->count < 64)
         log->order[log->count] = *r;
     log->count++;
@@ -447,6 +529,52 @@ static void test_dashboard_run(void)
     CHECK(f.errors == 0);
 }
 
+static void test_dashboard_cold_start(void)
+{
+    FakeEcu f;
+    KwIo io;
+    KwSession s;
+    KwDashLayout layout;
+    KwDashRead plan[KW_DASH_PLAN_MAX];
+    DashLog log = { .stop_after = 50 };
+    fake_ecu_init_car(&f, &io, FAKE_CAR_EUROVAN);
+    f.silent_wrong_baud = 1;
+    kw_dash_default(&layout);
+    int n = kw_dash_plan(&layout, plan, KW_DASH_PLAN_MAX);
+    kw_dash_run(&s, &io, plan, n, 2, dash_cb, &log);
+    CHECK(log.errors == 0);
+    CHECK(log.per_address[1] > 30 && log.per_address[2] >= 12);
+    CHECK(fabs(log.atf - 75.0) < 0.01);
+    CHECK(io.addr_baud[1] == 10400 && io.addr_baud[2] == 1200);
+    CHECK(log.connecting == f.wakes && f.wakes > 10);
+    CHECK(f.wake_attempts <= f.wakes + 12); /* extra discovery only on first visits */
+    CHECK(f.errors == 0 && f.saw_end);
+
+    /* A single-controller dashboard also recovers from a lost initial wake. */
+    fake_ecu_init_car(&f, &io, FAKE_CAR_EUROVAN);
+    f.drop_wakeups = 1;
+    KwDashRead tcm[] = { {2, 5} };
+    memset(&log, 0, sizeof(log));
+    log.stop_after = 4;
+    kw_dash_run(&s, &io, tcm, 1, 2, dash_cb, &log);
+    CHECK(log.errors == 0 && log.per_address[2] == 4);
+    CHECK(f.wakes == 1 && log.connecting == 1 && f.errors == 0);
+
+    /* Cancellation before connecting does not wake a controller. */
+    fake_ecu_init_car(&f, &io, FAKE_CAR_EUROVAN);
+    memset(&log, 0, sizeof(log));
+    log.stop_on_connect = 1;
+    kw_dash_run(&s, &io, plan, n, 2, dash_cb, &log);
+    CHECK(log.connecting == 1 && log.count == 0 && f.wake_attempts == 0);
+
+    /* An absent module gets full discovery once, then a short retry per visit. */
+    fake_ecu_init_car(&f, &io, FAKE_CAR_GOLF4);
+    memset(&log, 0, sizeof(log));
+    log.stop_after = 3;
+    kw_dash_run(&s, &io, tcm, 1, 2, dash_cb, &log);
+    CHECK(log.errors == 3 && f.wake_attempts == 9);
+}
+
 static void test_sensor_numbers(void)
 {
     /* kw_sensor_number must agree with the text kw_format_sensor shows */
@@ -533,9 +661,11 @@ int main(void)
         { "car detection from idents", test_car_detection },
         { "measuring-block labels", test_labels },
         { "baud switch to 10400 (ME7)", test_baud_switch },
+        { "silent sync discovery, transient wake loss, stale baud", test_silent_baud_discovery },
         { "wiki page to text", test_wikitext },
         { "dashboard plan", test_dashboard_plan },
         { "dashboard reads across controllers", test_dashboard_run },
+        { "dashboard cold start with silent wrong-speed sync", test_dashboard_cold_start },
         { "sensor numbers match formatted text", test_sensor_numbers },
         { "fuel economy", test_fuel },
     };

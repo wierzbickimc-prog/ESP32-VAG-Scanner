@@ -65,6 +65,7 @@ typedef struct {
     int group;
     const SensorValue *sensors;
     const KwHealthFrame *health;
+    KwDashState dash_state;
 } kl_event_t;
 
 typedef void (*kl_callback_t)(const kl_event_t *event);

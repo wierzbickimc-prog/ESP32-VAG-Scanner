@@ -121,6 +121,22 @@ private struct DashTile: View {
             case .fuel:
                 fuelBody
             }
+            if slot.kind != .empty {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    HStack(spacing: 6) {
+                        if state.connecting {
+                            Text(state.error == nil ? "Connecting…" : "Retrying…")
+                        }
+                        if let updated = state.lastUpdate {
+                            Text("Updated \(max(0, Int(context.date.timeIntervalSince(updated))))s ago")
+                        } else if !state.connecting {
+                            Text("Waiting for data")
+                        }
+                    }
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(Color.textMuted)
+                }
+            }
             if let error = state.error {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .font(.caption)

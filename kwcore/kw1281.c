@@ -139,25 +139,45 @@ static int set_baud(KwIo *io, int baud)
  * After a sync byte other than $55: switch to the speed that explains it, or
  * failing that the next one not yet tried. Returns 1 if the speed changed.
  */
-static int switch_baud(KwSession *s, int *tried)
+static int switch_baud(KwSession *s, int *tried, int search_silent)
 {
     KwIo *io = s->io;
-    if (s->sync_byte < 0 || !io->set_baud || !io->baud)
+    if ((s->sync_byte < 0 && !search_silent) || s->sync_byte == 0x55
+        || !io->set_baud || !io->baud)
         return 0;
     for (int i = 0; i < BAUD_COUNT; i++)
         if (BAUDS[i] == io->baud)
             *tried |= 1 << i;
-    int pick = -1;
-    for (int i = 0; i < BAUD_COUNT && pick < 0; i++)
-        if (!(*tried & (1 << i)) && heard_as(BAUDS[i], io->baud) == s->sync_byte)
-            pick = i;
-    for (int i = 0; i < BAUD_COUNT && pick < 0; i++)
-        if (!(*tried & (1 << i)))
-            pick = i;
-    if (pick < 0)
-        return 0;
-    *tried |= 1 << pick;
-    return set_baud(io, BAUDS[pick]);
+    for (;;) {
+        int pick = -1;
+        for (int i = 0; i < BAUD_COUNT && pick < 0; i++)
+            if (!(*tried & (1 << i)) && heard_as(BAUDS[i], io->baud) == s->sync_byte)
+                pick = i;
+        for (int i = 0; i < BAUD_COUNT && pick < 0; i++)
+            if (!(*tried & (1 << i)))
+                pick = i;
+        if (pick < 0)
+            return 0;
+        *tried |= 1 << pick;
+        if (set_baud(io, BAUDS[pick]))
+            return 1;
+        /* A backend may support only some rates. Keep searching the others. */
+    }
+}
+
+static void trace_connect(KwSession *s, const char *phase, int attempt, int err)
+{
+    if (!s->io->trace)
+        return;
+    char line[160], sync[16];
+    if (s->sync_byte < 0)
+        snprintf(sync, sizeof(sync), "timeout");
+    else
+        snprintf(sync, sizeof(sync), "%02X", s->sync_byte);
+    snprintf(line, sizeof(line), "connect address=%02X phase=%s attempt=%d baud=%d cached=%u sync=%s err=%d",
+             s->address, phase, attempt, s->io->baud,
+             (unsigned)s->io->addr_baud[s->address & 0x7F], sync, err);
+    s->io->trace(s->io->ctx, line);
 }
 
 /* Speed switches don't count against `attempts`. */
@@ -166,6 +186,7 @@ static int wakeup(KwSession *s, int attempts)
     KwIo *io = s->io;
     int err = KW_ENOWAKE;
     int switches = 0, tried = 0;
+    int retries = attempts > 0 ? attempts - 1 : 0;
     uint16_t known = io->addr_baud[s->address & 0x7F];
 
     if (known)
@@ -174,12 +195,20 @@ static int wakeup(KwSession *s, int attempts)
         if (attempt > 0)
             sleep_ms(io, 1000);
         err = wakeup_once(s, 0);
+        trace_connect(s, "wakeup", attempt + 1, err);
         if (err == KW_OK || err == KW_EKWP2000) {
             s->baud = io->baud;
-            io->addr_baud[s->address & 0x7F] = (uint16_t)io->baud;
+            if (err == KW_EKWP2000)
+                io->addr_baud[s->address & 0x7F] = (uint16_t)io->baud;
             return err;
         }
-        if (switches < BAUD_COUNT - 1 && switch_baud(s, &tried))
+        /* Retry a silent/incomplete handshake before searching. Extra speed
+         * probes are bounded by BAUD_COUNT and do not consume retries. */
+        if ((s->sync_byte < 0 || s->sync_byte == 0x55) && retries > 0) {
+            retries--;
+            continue;
+        }
+        if (switches < BAUD_COUNT - 1 && switch_baud(s, &tried, attempts > 1))
             switches++;
     }
     return err;
@@ -421,10 +450,13 @@ int kw_connect_attempts(KwSession *s, KwIo *io, uint8_t address, int attempts)
             goto fail;
         append_ident(s, blocks, n, &more);
     }
+    io->addr_baud[address & 0x7F] = (uint16_t)io->baud;
+    trace_connect(s, "ready", 0, KW_OK);
     return KW_OK;
 
 fail:
     s->connected = 0;
+    trace_connect(s, "identification", 0, n);
     return n;
 }
 

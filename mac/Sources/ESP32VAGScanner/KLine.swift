@@ -174,9 +174,10 @@ final class KLine: @unchecked Sendable {
                     context.onReading(DashReading(
                         address: Int(r.address), group: Int(r.group), err: r.err,
                         values: (0..<Int(r.count)).map { r.values[$0] },
-                        ident: r.ident.map { String(cString: $0) } ?? ""))
+                        ident: r.ident.map { String(cString: $0) } ?? "",
+                        connecting: r.state == KW_DASH_CONNECTING))
                     // the simulated car answers instantly; pace it like a real bus
-                    if context.demo { Thread.sleep(forTimeInterval: 0.12) }
+                    if context.demo && r.state == KW_DASH_READING { Thread.sleep(forTimeInterval: 0.12) }
                     return context.stop.isStopped ? 1 : 0
                 }, context.toOpaque())
             }

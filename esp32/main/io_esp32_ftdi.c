@@ -232,6 +232,12 @@ static void io_sleep(void *ctx, uint32_t us)
         esp_rom_delay_us((uint32_t)left);
 }
 
+static void io_trace(void *ctx, const char *message)
+{
+    (void)ctx;
+    ESP_LOGI(TAG, "%s", message);
+}
+
 void ftdi_attach(KwIo *io)
 {
     io->read_byte = io_read;
@@ -242,6 +248,7 @@ void ftdi_attach(KwIo *io)
     io->now_us = io_now;
     io->sleep_us = io_sleep;
     io->set_baud = io_set_baud;
+    io->trace = io_trace;
     memset(io->addr_baud, 0, sizeof(io->addr_baud));
     io->ctx = NULL;
 }

@@ -927,7 +927,7 @@ static void open_module_index(int idx)
 #define DASH_POINTS 120
 
 typedef struct {
-    lv_obj_t *name, *source, *value, *unit, *footer, *chart, *top, *bottom, *reset;
+    lv_obj_t *name, *source, *value, *unit, *footer, *chart, *top, *bottom, *reset, *freshness;
     lv_chart_series_t *series;
     float hist[DASH_POINTS];     /* metric; fuel slots hold l/100km */
     int hist_n;
@@ -936,12 +936,15 @@ typedef struct {
     char label[32];
     char error[80];
     bool have;
+    bool connecting;
+    double updated_s;
 } dash_tile_t;
 
 static lv_obj_t *s_dash, *s_dash_status, *s_dash_run_label, *s_dash_units_label;
 static dash_tile_t s_dt[KW_DASH_SLOTS];
 static KwDashLayout s_layout;
 static KwFuel s_fuel;
+static double s_fuel_maf_s, s_fuel_speed_s;
 static bool s_imperial = true;
 static bool s_dash_running, s_dash_restart;
 static int s_pick_slot;
@@ -1061,6 +1064,32 @@ static void dash_redraw_chart(int i)
     }
 }
 
+static void dash_refresh_age(int i)
+{
+    dash_tile_t *t = &s_dt[i];
+    if (s_layout.slot[i].kind == KW_SLOT_EMPTY) {
+        lv_label_set_text(t->freshness, "");
+        return;
+    }
+    const char *state = t->connecting ? (t->error[0] ? "Retrying" : "Connecting") : "Updated";
+    if (t->updated_s > 0) {
+        unsigned long age = (unsigned long)((esp_timer_get_time() / 1e6) - t->updated_s);
+        if (t->connecting)
+            label_printf(t->freshness, "%s; data %lus old", state, age);
+        else
+            label_printf(t->freshness, "Updated %lus ago", age);
+    } else {
+        lv_label_set_text(t->freshness, t->connecting ? state : "Waiting for data");
+    }
+}
+
+static void dash_age_timer(lv_timer_t *timer)
+{
+    (void)timer;
+    if (lv_screen_active() == s_dash)
+        for (int i = 0; i < KW_DASH_SLOTS; i++) dash_refresh_age(i);
+}
+
 static void dash_refresh_tile(int i)
 {
     dash_tile_t *t = &s_dt[i];
@@ -1137,6 +1166,7 @@ static void dash_refresh_tile(int i)
     }
     }
     dash_redraw_chart(i);
+    dash_refresh_age(i);
 }
 
 static void dash_push(dash_tile_t *t, double v)
@@ -1166,16 +1196,35 @@ static void dash_apply(const kl_event_t *ev)
         lv_label_set_text(s_dash_status, "No cable. Plug in the KKL cable, or start a demo car first.");
         return;
     }
-    lv_label_set_text(s_dash_status, s_demo ? "Live  " LV_SYMBOL_BULLET "  demo car" : "Live");
+    if (ev->dash_state == KW_DASH_CONNECTING) {
+        label_printf(s_dash_status, "Connecting to %02X...", ev->address);
+        for (int i = 0; i < KW_DASH_SLOTS; i++) {
+            const KwDashSlot *slot = &s_layout.slot[i];
+            if ((slot->kind == KW_SLOT_SENSOR && slot->address == ev->address)
+                || (slot->kind == KW_SLOT_FUEL && ev->address == KW_FUEL_ADDRESS)) {
+                s_dt[i].connecting = true;
+                dash_refresh_age(i);
+            }
+        }
+        return;
+    }
+    if (ev->ok)
+        lv_label_set_text(s_dash_status, s_demo ? "Live  " LV_SYMBOL_BULLET "  demo car" : "Live");
+    else
+        label_printf(s_dash_status, "Read failed on %02X; retrying", ev->address);
     double t_s = esp_timer_get_time() / 1e6;
     if (ev->ok && ev->address == KW_FUEL_ADDRESS) {
         double v;
         if (ev->group == KW_FUEL_MAF_GROUP && ev->count >= KW_FUEL_MAF_FIELD
-            && kw_sensor_number(&ev->sensors[KW_FUEL_MAF_FIELD - 1], &v, NULL))
+            && kw_sensor_number(&ev->sensors[KW_FUEL_MAF_FIELD - 1], &v, NULL)) {
             kw_fuel_maf(&s_fuel, v, t_s);
+            s_fuel_maf_s = t_s;
+        }
         if (ev->group == KW_FUEL_SPEED_GROUP && ev->count >= KW_FUEL_SPEED_FIELD
-            && kw_sensor_number(&ev->sensors[KW_FUEL_SPEED_FIELD - 1], &v, NULL))
+            && kw_sensor_number(&ev->sensors[KW_FUEL_SPEED_FIELD - 1], &v, NULL)) {
             kw_fuel_speed(&s_fuel, v, t_s);
+            s_fuel_speed_s = t_s;
+        }
     }
 
     for (int i = 0; i < KW_DASH_SLOTS; i++) {
@@ -1184,14 +1233,16 @@ static void dash_apply(const kl_event_t *ev)
         if (slot->kind == KW_SLOT_SENSOR) {
             if (slot->address != ev->address || slot->group != ev->group)
                 continue;
+            t->connecting = false;
             if (!ev->ok) {
                 dash_describe(t->error, sizeof(t->error), ev->err, ev->address, ev->group);
-            } else if (slot->field > ev->count) {
+            } else if (slot->field < 1 || slot->field > ev->count) {
                 snprintf(t->error, sizeof(t->error), "Group %d has only %d fields.", slot->group, ev->count);
             } else {
                 const SensorValue *sv = &ev->sensors[slot->field - 1];
                 double v;
                 t->error[0] = '\0';
+                t->updated_s = t_s;
                 snprintf(t->label, sizeof(t->label), "%s", kw_label(ev->ident, slot->group, slot->field, sv->sensor_id));
                 if (kw_sensor_number(sv, &v, &t->metric_unit)) {
                     t->have = true;
@@ -1206,10 +1257,13 @@ static void dash_apply(const kl_event_t *ev)
             if (ev->address != KW_FUEL_ADDRESS
                 || (ev->group != KW_FUEL_MAF_GROUP && ev->group != KW_FUEL_SPEED_GROUP))
                 continue;
+            t->connecting = false;
             if (!ev->ok) {
                 dash_describe(t->error, sizeof(t->error), ev->err, ev->address, ev->group);
             } else {
                 t->error[0] = '\0';
+                if (s_fuel_maf_s > 0 && s_fuel_speed_s > 0)
+                    t->updated_s = s_fuel_maf_s < s_fuel_speed_s ? s_fuel_maf_s : s_fuel_speed_s;
                 double instant = kw_fuel_instant(&s_fuel);
                 if (instant > 0 && ev->group == KW_FUEL_SPEED_GROUP)
                     dash_push(t, instant);
@@ -1224,6 +1278,11 @@ static void dash_apply(const kl_event_t *ev)
 static void dash_set_running(bool running)
 {
     s_dash_running = running;
+    if (!running)
+        for (int i = 0; i < KW_DASH_SLOTS; i++) {
+            s_dt[i].connecting = false;
+            dash_refresh_age(i);
+        }
     lv_label_set_text(s_dash_run_label, running ? LV_SYMBOL_STOP "  Stop" : LV_SYMBOL_PLAY "  Start");
 }
 
@@ -1245,6 +1304,10 @@ static void dash_start(void)
         return;
     s_busy = true;
     dash_set_running(true);
+    for (int i = 0; i < KW_DASH_SLOTS; i++) {
+        s_dt[i].connecting = s_layout.slot[i].kind != KW_SLOT_EMPTY;
+        dash_refresh_age(i);
+    }
     lv_label_set_text(s_dash_status, "Connecting...");
 }
 
@@ -1295,6 +1358,8 @@ static void dash_set_slot(int i, const KwDashSlot *slot)
     memset(&s_dt[i].hist, 0, sizeof(s_dt[i].hist));
     s_dt[i].hist_n = 0;
     s_dt[i].have = false;
+    s_dt[i].updated_s = 0;
+    s_dt[i].connecting = false;
     s_dt[i].text[0] = s_dt[i].label[0] = s_dt[i].error[0] = '\0';
     dash_save();
     dash_refresh_tile(i);
@@ -1429,6 +1494,10 @@ static void build_dash(void)
         lv_obj_set_pos(t->value, 0, 72);
         t->unit = text(tile, &lv_font_montserrat_20, C_MUTED, "");
         lv_obj_set_pos(t->unit, 2, 132);
+        t->freshness = text(tile, &lv_font_montserrat_16, C_MUTED, "");
+        lv_obj_set_pos(t->freshness, 0, 168);
+        lv_obj_set_width(t->freshness, 220);
+        lv_label_set_long_mode(t->freshness, LV_LABEL_LONG_DOT);
 
         t->chart = lv_chart_create(tile);
         lv_obj_set_size(t->chart, 400, 128);
@@ -1460,6 +1529,7 @@ static void build_dash(void)
         lv_obj_align(t->reset, LV_ALIGN_BOTTOM_RIGHT, 0, 8);
     }
     dash_set_running(false);
+    lv_timer_create(dash_age_timer, 1000, NULL);
 }
 
 /* ---- EuroVan health checks ------------------------------------------------ */

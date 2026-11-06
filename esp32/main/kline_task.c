@@ -133,8 +133,8 @@ static int on_dash_reading(void *ctx, const KwDashReading *r)
     (void)ctx;
     emit((kl_event_t){ .type = KL_EV_DASH, .op = KL_DASH, .ok = r->err == KW_OK, .err = r->err,
                        .address = r->address, .group = r->group, .count = r->count,
-                       .sensors = r->values, .ident = r->ident });
-    demo_pause(120);
+                       .sensors = r->values, .ident = r->ident, .dash_state = r->state });
+    if (r->state == KW_DASH_READING) demo_pause(120);
     return s_cancel;
 }
 

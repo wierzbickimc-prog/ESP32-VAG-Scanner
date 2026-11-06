@@ -37,6 +37,8 @@ typedef struct FakeEcu {
 
     /* options */
     int repeat_sync;          /* send $55 01 8A again before the first block */
+    int silent_wrong_baud;    /* wrong speed yields a timeout instead of a byte */
+    int drop_wakeups;         /* ignore this many decoded wake-ups */
     int live;                 /* vary measured values between reads */
     int health_mode;          /* parked health scenario, clean simulated fault memory */
     unsigned health_reads;   /* ATF warm-up, independent of the driving demo */
@@ -45,6 +47,7 @@ typedef struct FakeEcu {
     int errors;
     int saw_end;
     int wakes;                /* controllers woken */
+    int wake_attempts;        /* decoded addresses, including silent/absent ones */
     int baud;                 /* the tester's line speed (KwIo set_baud) */
     int baud_switches;
 

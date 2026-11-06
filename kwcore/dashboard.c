@@ -92,6 +92,7 @@ void kw_dash_run(KwSession *s, KwIo *io, const KwDashRead *plan, int n, int pass
         single &= plan[i].address == plan[0].address;
     if (passes < 1)
         passes = 1;
+    uint8_t visited[128] = {0};
 
     for (;;) {
         for (int start = 0; start < n;) {
@@ -99,10 +100,18 @@ void kw_dash_run(KwSession *s, KwIo *io, const KwDashRead *plan, int n, int pass
             while (end < n && plan[end].address == plan[start].address)
                 end++;
 
-            int rc = kw_connect_attempts(s, io, plan[start].address, 1);
+            KwDashReading connecting = { .address = plan[start].address,
+                .state = KW_DASH_CONNECTING };
+            if (callback(ctx, &connecting))
+                return;
+            int index = plan[start].address & 0x7F;
+            /* Discover even when a wrong-speed UART delivers no sync byte.
+             * Later visits remain quick, including absent controllers. */
+            int rc = kw_connect_attempts(s, io, plan[start].address, visited[index] ? 1 : 3);
+            visited[index] = 1;
             if (rc != KW_OK) {
                 for (int i = start; i < end; i++) {
-                    KwDashReading r = { plan[i].address, plan[i].group, rc, 0, NULL, "" };
+                    KwDashReading r = { .address = plan[i].address, .group = plan[i].group, .err = rc, .ident = "" };
                     if (callback(ctx, &r))
                         return;
                 }
@@ -115,8 +124,15 @@ void kw_dash_run(KwSession *s, KwIo *io, const KwDashRead *plan, int n, int pass
                 for (int i = start; i < end && alive; i++) {
                     SensorValue values[16];
                     int got = kw_group_read(s, plan[i].group, values, 16);
-                    KwDashReading r = { plan[i].address, plan[i].group, got < 0 ? got : KW_OK,
-                                        got < 0 ? 0 : got, values, s->ident };
+                    if (got < 0 && io->trace) {
+                        char line[128];
+                        snprintf(line, sizeof(line), "dashboard address=%02X phase=group group=%u baud=%d err=%d",
+                                 plan[i].address, (unsigned)plan[i].group, io->baud, got);
+                        io->trace(io->ctx, line);
+                    }
+                    KwDashReading r = { .address = plan[i].address, .group = plan[i].group,
+                        .err = got < 0 ? got : KW_OK, .count = got < 0 ? 0 : got,
+                        .values = values, .ident = s->ident };
                     /* a NAK only means "no such group"; anything else drops the link */
                     if (got < 0 && got != KW_ENAK) {
                         s->connected = 0;

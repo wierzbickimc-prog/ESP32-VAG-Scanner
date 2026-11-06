@@ -8,6 +8,7 @@ struct DashReading: Sendable {
     let err: Int32
     let values: [SensorValue]
     let ident: String
+    var connecting = false
 }
 
 /// What a dashboard slot shows (kwcore/dashboard.h KwDashSlot).
@@ -78,6 +79,8 @@ struct DashSlotState {
     var label: String?
     var history: [DashSample] = []
     var error: String?
+    var connecting = false
+    var lastUpdate: Date?
 }
 
 /// The four-slot dashboard: layout, readings, trends and the fuel estimate.
@@ -96,6 +99,8 @@ final class Dashboard: ObservableObject {
 
     static let historyLimit: TimeInterval = 15 * 60
     private var stop: StopFlag?
+    private var lastMafUpdate: Date?
+    private var lastSpeedUpdate: Date?
 
     init() {
         if let data = UserDefaults.standard.data(forKey: "dashSlots"),
@@ -146,6 +151,9 @@ final class Dashboard: ObservableObject {
         running = true
         model.busy = true
         status = "Connecting…"
+        for i in states.indices where slots[i].kind != .empty {
+            states[i].connecting = true
+        }
         Task {
             do {
                 try await model.kline.runDashboard(port: model.port, baud: model.baud, plan: plan, stop: stop) { reading in
@@ -156,6 +164,7 @@ final class Dashboard: ObservableObject {
                 status = error.localizedDescription
             }
             running = false
+            for i in states.indices { states[i].connecting = false }
             model.busy = false
             saveTrip()
             if restart {
@@ -195,15 +204,28 @@ final class Dashboard: ObservableObject {
 
     // MARK: Readings
 
-    private func apply(_ r: DashReading) {
+    func apply(_ r: DashReading) {
         let now = Date()
-        status = "Live"
+        if r.connecting {
+            status = String(format: "Connecting to %02X…", r.address)
+            for i in slots.indices {
+                let slot = slots[i]
+                if (slot.kind == .sensor && slot.address == r.address)
+                    || (slot.kind == .fuel && r.address == Int(KW_FUEL_ADDRESS)) {
+                    states[i].connecting = true
+                }
+            }
+            return
+        }
+        status = r.err == KW_OK ? "Live" : String(format: "Read failed on %02X; retrying", r.address)
         if r.address == Int(KW_FUEL_ADDRESS) && r.err == KW_OK {
             if r.group == Int(KW_FUEL_MAF_GROUP), let maf = number(r, field: Int(KW_FUEL_MAF_FIELD)) {
                 kw_fuel_maf(&fuel, maf.value, now.timeIntervalSinceReferenceDate)
+                lastMafUpdate = now
             }
             if r.group == Int(KW_FUEL_SPEED_GROUP), let speed = number(r, field: Int(KW_FUEL_SPEED_FIELD)) {
                 kw_fuel_speed(&fuel, speed.value, now.timeIntervalSinceReferenceDate)
+                lastSpeedUpdate = now
             }
         }
 
@@ -214,13 +236,15 @@ final class Dashboard: ObservableObject {
                 continue
             case .sensor:
                 guard slot.address == r.address && slot.group == r.group else { continue }
+                state.connecting = false
                 if r.err != KW_OK {
                     state.error = Self.describe(r.err, slot)
-                } else if slot.field > r.values.count {
+                } else if slot.field < 1 || slot.field > r.values.count {
                     state.error = "Group \(slot.group) has only \(r.values.count) fields."
                 } else {
                     var sv = r.values[slot.field - 1]
                     state.error = nil
+                    state.lastUpdate = now
                     state.label = String(cString: kw_label(r.ident, Int32(slot.group), Int32(slot.field), sv.sensor_id))
                     if let n = number(r, field: slot.field) {
                         state.value = n.value
@@ -231,16 +255,19 @@ final class Dashboard: ObservableObject {
                         var buf = [CChar](repeating: 0, count: 64)
                         kw_format_sensor(&sv, &buf, 64)
                         state.text = String(cString: buf)
+                        state.value = nil
                     }
                 }
             case .fuel:
                 guard r.address == Int(KW_FUEL_ADDRESS)
                       && (r.group == Int(KW_FUEL_MAF_GROUP) || r.group == Int(KW_FUEL_SPEED_GROUP)) else { continue }
+                state.connecting = false
                 if r.err != KW_OK {
                     state.error = Self.describe(r.err, slot)
                     break
                 }
                 state.error = nil
+                if let maf = lastMafUpdate, let speed = lastSpeedUpdate { state.lastUpdate = min(maf, speed) }
                 let instant = kw_fuel_instant(&fuel)
                 state.value = instant > 0 ? instant : nil
                 if instant > 0 && r.group == Int(KW_FUEL_SPEED_GROUP) {

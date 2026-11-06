@@ -93,7 +93,18 @@ the engine update continuously while the transmission's ATF temperature updates 
 seconds. The ATF preset uses **02, group 5, field 1**, verified on the EuroVan's 01P.
 Some other transmissions use group 2 or 4: open **02 Auto Trans → Live data**,
 find the temperature, and pin it to the slot if it differs.
+You can start the dashboard directly without opening a module or scanning first.
+Its first connection to each controller retries wake-up and searches the supported
+baud rates even if no sync byte arrives. This initial discovery can take longer
+than a normal controller switch; absent controllers get a short retry on later visits.
+Tiles show connection status and the age of the last successful sample, including
+when a failed read leaves the previous value displayed.
 The fuel estimate can't see overrun fuel cut-off, so calibrate it after a fill-up.
+
+For connection diagnostics on the Mac, run `KW_TRACE=1 swift run ESP32VAGScanner`
+from `mac/`. The trace includes address, attempted baud, cached baud, sync byte
+or timeout, handshake/identification phase, and error code. The P4 emits these
+connection diagnostics in its serial monitor, plus measuring-group failures.
 
 KW1281 controllers store only a fault code and one status byte. There's no mileage,
 occurrence count or freeze-frame data; that arrived with KWP2000 and UDS, which this tool

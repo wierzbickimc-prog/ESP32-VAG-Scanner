@@ -80,6 +80,12 @@ static int serial_read(void *ctx, int timeout_ms)
     return b;
 }
 
+static void serial_trace(void *ctx, const char *message)
+{
+    if (((SerialCtx *)ctx)->trace)
+        fprintf(stderr, "%s\n", message);
+}
+
 static void serial_write(void *ctx, uint8_t b)
 {
     SerialCtx *c = ctx;
@@ -202,6 +208,7 @@ int kw_serial_open(KwIo *io, const char *port, int baud)
     io->baud = baud;
     memset(io->addr_baud, 0, sizeof(io->addr_baud));
     io->ctx = c;
+    io->trace = serial_trace;
     return 0;
 
 fail:

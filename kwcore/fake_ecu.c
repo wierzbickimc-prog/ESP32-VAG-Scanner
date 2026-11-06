@@ -511,11 +511,18 @@ static void f_flush(void *ctx)
     f->edges = 0;
     if (!ok)
         return;
+    f->wake_attempts++;
+    if (f->drop_wakeups > 0) {
+        f->drop_wakeups--;
+        return;
+    }
     for (int i = 0; i < f->module_count; i++) {
         FakeModule *m = &f->modules[i];
         if (m->address != addr)
             continue;
         if (m->baud && m->baud != f->baud) {
+            if (f->silent_wrong_baud)
+                return;
             /* the $55 sync as a UART at the wrong speed hears it */
             int v = 0;
             for (int bit = 0; bit < 8; bit++) {
@@ -670,4 +677,5 @@ void fake_ecu_init_car(FakeEcu *f, KwIo *io, FakeCar car)
     memset(io->addr_baud, 0, sizeof(io->addr_baud));
     f->baud = 9600;
     io->ctx = f;
+    io->trace = NULL;
 }

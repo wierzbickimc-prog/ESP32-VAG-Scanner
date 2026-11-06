@@ -29,6 +29,8 @@ extern "C" {
  * engine, 1200 for an 01P transmission, 9600 for most). A sync byte other
  * than $55 means the speeds differ: with set_baud, the core works out the
  * controller's speed from the garbled byte, switches, and wakes it again.
+ * With multiple attempts it also searches after a sync timeout; single-attempt
+ * scans skip silent addresses without searching every speed.
  * addr_baud remembers each controller's speed so later wake-ups (the
  * dashboard alternates controllers) switch first. Zero it when opening.
  */
@@ -44,6 +46,7 @@ typedef struct KwIo {
     int baud;
     uint16_t addr_baud[128];
     void *ctx;
+    void (*trace)(void *ctx, const char *message); /* optional connection diagnostics */
 } KwIo;
 
 /* Error codes (all negative). */
@@ -110,12 +113,15 @@ typedef struct SensorValue {
 void kw_reset_interface(KwIo *io);
 
 /*
- * Wakes `address` (with up to 3 attempts), then reads the identification
- * blocks the controller sends unprompted into s->ident. Returns KW_OK or an error.
+ * Wakes `address` (with up to 3 attempts plus speed probes), then reads the
+ * identification blocks the controller sends unprompted into s->ident.
+ * Returns KW_OK or an error.
  */
 int kw_connect(KwSession *s, KwIo *io, uint8_t address);
 
-/* As kw_connect with a chosen number of wakeup attempts (1 is right for scanning). */
+/* As kw_connect with a chosen number of wakeup attempts (1 is right for scanning).
+ * At most four additional probes try the other supported speeds. Silent-speed
+ * discovery is enabled only when attempts > 1. A valid $55 keeps the same speed. */
 int kw_connect_attempts(KwSession *s, KwIo *io, uint8_t address, int attempts);
 
 /* Sends the End Communication block. Safe to call when not connected. */

@@ -80,6 +80,9 @@ typedef struct {
  */
 int kw_dash_plan(const KwDashLayout *layout, KwDashRead *plan, int max);
 
+/* Connecting notifications have no values; they precede each controller visit. */
+typedef enum { KW_DASH_READING = 0, KW_DASH_CONNECTING } KwDashState;
+
 /* One group read during kw_dash_run. On error, `err` < 0 and `count` = 0. */
 typedef struct {
     uint8_t address;
@@ -88,16 +91,20 @@ typedef struct {
     int count;
     const SensorValue *values;
     const char *ident;
+    KwDashState state;
 } KwDashReading;
 
-/* Called after every read; return nonzero to stop. */
+/* Called before connecting and after every read; return nonzero to stop. */
 typedef int (*KwDashCallback)(void *ctx, const KwDashReading *reading);
 
 /*
  * Reads `plan` round and round until the callback asks to stop. Each
  * controller gets `passes` rounds of its groups per visit. A controller that
  * doesn't answer gets an error reading for each of its groups, and the next
- * visit tries again.
+ * visit tries again. The first visit to each controller allows three wakeup
+ * attempts plus bounded speed discovery, including after sync timeouts.
+ * Subsequent visits use one attempt with the remembered speed. Connecting
+ * notifications use only `address` and `state` (no group values).
  */
 void kw_dash_run(KwSession *s, KwIo *io, const KwDashRead *plan, int n, int passes,
                  KwDashCallback callback, void *ctx);
