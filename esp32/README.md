@@ -18,7 +18,7 @@ against a fake ECU (`make -C ../kwcore test`).
 | `components/jc8012p4a1c/` | Panel/touch drivers vendored from chipguyhere/JC8012P4A1C_display (MIT) |
 | `main/main.c` | Starts the UI; stays idle if the display is unavailable |
 
-## Build
+## Build: 10.1-inch JC8012P4A1C
 
 Builds cleanly with **ESP-IDF v5.5.6** (installed at `~/esp/esp-idf-v5.5`). v5.5.0
 does not work: the esp_lvgl_port release it resolves needs a 5.5.x patch-release API.
@@ -32,6 +32,75 @@ idf.py -p /dev/cu.usbserial-XXXX flash monitor   # the board's CH340 port
 
 Components (`usb_host_cdc_acm`, `lvgl`, `esp_lvgl_port`, `esp_lcd_touch`) are
 fetched automatically from `main/idf_component.yml`.
+
+## Build: 4.3-inch JC4880P443
+
+The PCB marked `JC4880P443`, with a `JC-ESP32P4-M3` module, has a separate
+480x800 ST7701S / GT911 board profile. The owner's unit was identified as
+**ESP32-P4 revision v3.2, 16 MB flash** on 2026-11-13. Its **top USB-C port**
+(owner's orientation) is native USB Serial/JTAG, currently `/dev/cu.usbmodem101`.
+The original board uses v1.x silicon: their bootloaders are incompatible.
+Keep both the config file and build directory separate:
+
+```sh
+. ~/esp/esp-idf-v5.5/export.sh
+cd esp32
+idf.py -B build-jc4880p443 \
+  -D SDKCONFIG=sdkconfig.jc4880p443 \
+  -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.jc4880p443' \
+  build merge-bin -o esp32-vag-scanner-jc4880p443.bin
+```
+
+The merged image is `build-jc4880p443/esp32-vag-scanner-jc4880p443.bin`.
+To flash this profile after building, use the **same configuration arguments**:
+
+```sh
+idf.py -B build-jc4880p443 \
+  -D SDKCONFIG=sdkconfig.jc4880p443 \
+  -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.jc4880p443' \
+  -p /dev/cu.usbmodem101 flash monitor
+```
+
+This profile selects v3.x boot support, USB Serial/JTAG console input/output,
+the vendor's LCD reset GPIO5, backlight GPIO23, and touch I2C SDA7/SCL8.
+The GT911 is probed at both 0x5D and 0x14; unconfirmed reset/interrupt pins
+are left alone. C6 SDIO pins match Guition's board definition. Its firmware
+is not updated by this build.
+
+The UI scales its geometry and fonts for the smaller display. The build resizes
+the existing RGB565 images to 480x384 with `assets/tools/resize_p4_heroes.py`
+(Python standard library only). No SD card is needed.
+
+Panel timing and initialization come from
+[Guition's board definition](https://github.com/Guition-JC/Guition/tree/737d0c14001f82e79ae82a41257cf0a3c86bc101/components/board/guition_boards/jc4880p443).
+The initialization table and its license are kept in `components/jc4880p443/`.
+The registry board component itself needs ESP-IDF 6.1; this port uses the
+table with the project's existing ESP-IDF 5.5.6 drivers.
+
+**Validation:** both board profiles compile; protocol/health, startup, and Wi-Fi
+event tests pass. Host rendering covers the main screens, health prerequisite
+wrapping, and the Wi-Fi keyboard at both resolutions. The original board's six
+preview screens match their pre-port pixels. The 4.3-inch firmware was flashed on
+2026-11-13: 32 MB PSRAM passes its test at 200 MHz, the panel/LVGL initialize,
+GT911 answers at 0x5D, the native debug console returns screenshots, and the C6
+completes SDIO/Wi-Fi startup. The owner confirmed a stable display and working
+touch in Demo after the fixes below; serial capture shows no further panic/reset
+during the boot and interaction checks. Wi-Fi scan/connection and KKL
+enumeration/VBUS still need validation. The web
+installer and release workflow continue to ship the 10.1-inch profile.
+
+Bring-up exposed two compatibility issues now handled by this port: DSI clock
+selection must use `phy_clk_src=0` rather than the legacy clock alias on v3.x;
+this factory C6 sends duplicate Wi-Fi station-start events. The wrappers in
+`main/wifi_events.c` prevent a repeated lwIP interface addition and allow normal
+stop/restart cycles. The regression test runs without hardware:
+
+```sh
+python3 esp32/tests/run_wifi_events_test.py   # from the repository root
+```
+
+The full factory P4 flash backup and checksum are kept in the gitignored
+`esp32/board-backups/` directory so cleaning a build does not remove them.
 
 ## Direct module access
 

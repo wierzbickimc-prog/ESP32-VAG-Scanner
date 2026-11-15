@@ -8,17 +8,33 @@ endif()
 
 # Hero images: raw RGB565 from assets/tools/make_assets.py.
 set(hero_dir "${CMAKE_CURRENT_LIST_DIR}/../../assets/out/p4")
+set(board_display_source board_display.c)
+if(CONFIG_BOARD_JC4880P443)
+    set(board_display_source board_display_jc4880p443.c)
+    set(hero_input "${hero_dir}")
+    set(hero_dir "${CMAKE_BINARY_DIR}/heroes")
+    set(hero_tool "${CMAKE_CURRENT_LIST_DIR}/../../assets/tools/resize_p4_heroes.py")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${hero_tool}"
+        "${hero_input}/hero_eurovan.rgb565" "${hero_input}/hero_harlequin.rgb565"
+        "${hero_input}/hero_family.rgb565")
+    execute_process(COMMAND "${PYTHON}" "${hero_tool}" "${hero_input}" "${hero_dir}" 480
+        RESULT_VARIABLE hero_result)
+    if(NOT hero_result EQUAL 0)
+        message(FATAL_ERROR "Could not generate JC4880P443 hero images")
+    endif()
+endif()
 
 idf_component_register(
     SRCS
         main.c
         assets.c
-        board_display.c
+        ${board_display_source}
         debug_console.c
         gui.c
         io_esp32_ftdi.c
         kline_task.c
         net.c
+        wifi_events.c
         ../../kwcore/car_profile.c
         ../../kwcore/dashboard.c
         ../../kwcore/health.c
@@ -28,7 +44,7 @@ idf_component_register(
         ../../kwcore/labels.c
         ../../kwcore/wikitext.c
     INCLUDE_DIRS . ../../kwcore
-    REQUIRES usb esp_timer esp_wifi esp_netif esp_event esp_http_client mbedtls sdmmc esp_driver_sdmmc esp_lcd esp_driver_gpio esp_driver_i2c esp_driver_uart nvs_flash jc8012p4a1c
+    REQUIRES usb esp_timer esp_wifi esp_netif esp_event esp_http_client mbedtls sdmmc esp_driver_sdmmc esp_lcd esp_driver_gpio esp_driver_i2c esp_driver_uart esp_driver_usb_serial_jtag nvs_flash jc8012p4a1c jc4880p443
     EMBED_FILES
         "${hero_dir}/hero_eurovan.rgb565"
         "${hero_dir}/hero_harlequin.rgb565"
@@ -38,6 +54,10 @@ idf_component_register(
 
 # net.c: survive a board whose ESP32-C6 doesn't answer (ESP-Hosted would abort).
 target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=esp_wifi_remote_init")
+target_link_libraries(${COMPONENT_LIB} INTERFACE
+    "-Wl,--wrap=esp_netif_action_start" "-Wl,--wrap=esp_netif_action_stop"
+    "-Wl,--undefined=__wrap_esp_netif_action_start"
+    "-Wl,--undefined=__wrap_esp_netif_action_stop")
 
 if(EXISTS "${FAULT_CODES_CSV}")
     target_compile_definitions(${COMPONENT_LIB} PRIVATE HAVE_FAULT_TABLE=1)

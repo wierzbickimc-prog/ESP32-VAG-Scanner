@@ -33,25 +33,55 @@
   for this work; P4 touch and new real-vehicle health groups remain unverified.
   Firmware was built, not flashed.
 
-## Planned: 4.3" Guition JC4880P443C port (board ordered 2026-10-31)
+## 4.3" Guition JC4880P443 port (flashed 2026-11-13)
 
-480x800 MIPI-DSI, ESP32-P4 + ESP32-C6. Reported GT911 touch; the panel controller (ST7701?)
-and every pin are **unconfirmed**: read them from the vendor demo code/schematic or the board.
+Board received and identified on 2026-11-13: PCB marked `JC4880P443`, module
+`JC-ESP32P4-M3`, SoC marking `ESP32P4NRW32`, Wi-Fi marking `ESP32-C6`.
+The **top USB-C port** (owner's orientation) enumerates as Espressif USB
+JTAG/serial (`303a:1001`), currently `/dev/cu.usbmodem101` when connected directly
+to the Mac. The other port did not enumerate on the Mac; its USB host operation
+and VBUS supply remain untested. `esptool flash_id` confirmed **ESP32-P4 revision
+v3.2**, a 40 MHz crystal, and **16 MB flash**. The existing 10.1" board's
+`CONFIG_ESP32P4_SELECTS_REV_LESS_V3` configuration must not be reused unchanged.
+The P4 firmware was flashed and verified on 2026-11-13 after saving the full 16 MB
+factory image at `esp32/board-backups/jc4880p443-factory-2026-11-13.bin` (gitignored,
+outside build directories). Its `.sha256` file records the backup checksum.
+Boot confirms **32 MB PSRAM at 200 MHz**, passing the memory test.
 
-1. **Identify on arrival:** P4 chip revision (v1.x runs this sdkconfig; v3 needs its own),
-   LCD controller + init sequence, touch I2C pins/address, backlight, C6 SDIO pins and reset,
-   flash/PSRAM size. Probe the C6 with the `c6_present()` logic before trusting the pins.
-2. **Board layer:** move `board_display.c` behind a board choice (Kconfig `BOARD_JC8012P4A1C` /
-   `BOARD_JC4880P443C`), each with its panel/touch driver, pins and resolution. Keep
-   `SCREEN_W/H` from the board, not literals.
-3. **Layout:** `gui.c` uses absolute 800x1280 coordinates. Same portrait shape (0.6 vs 0.625):
-   add a `S(x)` scale macro (x * SCREEN_W / 800) for positions/sizes, pick fonts per board
-   (48->28, 36->24, 28->20, 24->16, 20->16), and recheck the dashboard tiles, Wi-Fi keyboard
-   (shorter), fault dialog with QR (smaller code) and hero images (need 480-wide RGB565 heroes
-   from `make_assets.py`).
-4. **Builds:** two sdkconfig default sets, two images; the install page gets one button per
-   board (ESP Web Tools only identifies the chip). The workflow builds both.
-5. **Test:** demo car on both boards (dashboard, live data, faults, Wi-Fi viewer), then the van.
+- Implemented `BOARD_JC4880P443` / `BOARD_JC8012P4A1C` choice, `board_config.h`,
+  separate ST7701S/GT911 display bring-up, and `sdkconfig.defaults.jc4880p443`.
+  Use separate `build-jc4880p443` and `sdkconfig.jc4880p443`; exact build/flash
+  commands are in `esp32/README.md`. The default build still targets the 10.1" unit.
+- Guition vendor definition at commit `737d0c14001f82e79ae82a41257cf0a3c86bc101`:
+  480x800 DSI, LCD reset5, backlight23, touch SDA7/SCL8, GT911 addresses0x5D/0x14.
+  Leave touch reset/interrupt unset rather than driving unconfirmed pins. C6 SDIO
+  pins match the existing board. Custom panel table is vendored with its license
+  under `esp32/components/jc4880p443/`; use registry ST7701 2.0.2 and GT911 1.1.3.
+- `ui_layout.h` scales geometry on an 800-pixel design grid while using the full
+  panel height; fonts are selected per board. Checkboxes wrap long health
+  prerequisites on the small panel. Heroes resize to 480x384 at configure time,
+  using a standard-library Python script; no SD or Pillow dependency.
+- Native USB Serial/JTAG debug console supports the same commands/screenshots as
+  the old UART console. No C6 firmware was written or changed.
+- Two bring-up fixes: set DSI `phy_clk_src=0` so ESP-IDF picks the v3.x XTAL
+  reference (the legacy `MIPI_DSI_PHY_CLK_SRC_DEFAULT` alias aborts on v3.x);
+  `wifi_events.c` wraps the netif start/stop actions to ignore duplicate station
+  lifecycle events. This C6 emits two STA_START events about 20 ms apart, causing
+  lwIP's `netif already added` assertion without the guard. A host regression
+  covers duplicate START/STOP, legitimate restarts, and unrelated events.
+- Verified: both ESP-IDF board builds; startup and protocol/health tests; LVGL host
+  rendering of home, dashboard, health, Wi-Fi, detail, and keyboard at both sizes.
+  The original six 800x1280 previews are pixel-identical to their pre-port versions.
+  On hardware: PSRAM passes, panel/LVGL initialize, GT911 answers at 0x5D, native
+  console/snapshot works, C6 SDIO handshake and Wi-Fi startup complete. A 35-second
+  boot capture has one startup and no panic after the duplicate-event fix. The
+  owner confirmed a stable screen and working touch in Demo; a further 25-second
+  interaction capture shows simulated scan/module requests with no panic/reset.
+  Wi-Fi scan/connection, KKL USB host/VBUS, complete demo flows and the van still
+  need validation. Hardware screenshot: `esp32/build-jc4880p443/previews/hardware-home.png`.
+- New app is about 2.7 MB in an 8 MB app partition. Merged image:
+  `esp32/build-jc4880p443/esp32-vag-scanner-jc4880p443.bin`.
+  Release workflow/install page remain on the original board pending validation.
 
 ## Wi-Fi and the Ross-Tech viewer on the P4 (2026-10-31)
 

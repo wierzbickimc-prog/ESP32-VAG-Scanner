@@ -1,0 +1,7 @@
+Existing board setup files carrying SPDX-License-Identifier:
+LicenseRef-Espressif-Modified-MIT retain their original copyright and license.
+Their license is reproduced in LICENSES/LicenseRef-Espressif-Modified-MIT.txt.
+The root MIT License does not replace file-specific third-party licenses.
+
+Third-party drivers are declared as registry dependencies and retain their
+own licenses. They are not bundled in this board component.

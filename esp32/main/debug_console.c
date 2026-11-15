@@ -20,6 +20,8 @@
 #include "board_display.h"
 #include "driver/uart.h"
 #include "driver/uart_vfs.h"
+#include "driver/usb_serial_jtag.h"
+#include "driver/usb_serial_jtag_vfs.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -99,12 +101,18 @@ static void send_shot(void)
 static void console_task(void *arg)
 {
     (void)arg;
+#if !CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
     const int port = CONFIG_ESP_CONSOLE_UART_NUM;
+#endif
     char line[64];
     size_t len = 0;
     for (;;) {
         uint8_t c;
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
+        if (usb_serial_jtag_read_bytes(&c, 1, portMAX_DELAY) != 1)
+#else
         if (uart_read_bytes(port, &c, 1, portMAX_DELAY) != 1)
+#endif
             continue;
         if (c != '\r' && c != '\n') {
             /* skip line noise (the board reset glitches the first byte) */
@@ -126,6 +134,15 @@ static void console_task(void *arg)
 
 void debug_console_start(void)
 {
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
+    usb_serial_jtag_driver_config_t cfg = { .tx_buffer_size = 1024, .rx_buffer_size = 1024 };
+    esp_err_t err = usb_serial_jtag_driver_install(&cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE("console", "USB Serial/JTAG driver: %s", esp_err_to_name(err));
+        return;
+    }
+    usb_serial_jtag_vfs_use_driver();
+#else
     /* Install the driver for reads; console output keeps working through it. */
     const int port = CONFIG_ESP_CONSOLE_UART_NUM;
     if (!uart_is_driver_installed(port)) {
@@ -136,7 +153,12 @@ void debug_console_start(void)
         }
     }
     uart_vfs_dev_use_driver(port);
+#endif
     /* lv_snapshot_take renders on this task's stack: give it room */
     xTaskCreate(console_task, "console", 16384, NULL, 2, NULL);
+#if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
+    ESP_LOGI("console", "debug console on USB Serial/JTAG");
+#else
     ESP_LOGI("console", "debug console on UART%d", port);
+#endif
 }

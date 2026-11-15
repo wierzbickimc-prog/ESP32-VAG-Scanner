@@ -1,0 +1,14 @@
+menu "VAG Scanner board"
+
+choice VAG_BOARD
+    prompt "Display board"
+    default BOARD_JC8012P4A1C
+
+    config BOARD_JC8012P4A1C
+        bool "Guition JC8012P4A1C (10.1 inch, 800x1280)"
+
+    config BOARD_JC4880P443
+        bool "Guition JC4880P443 (4.3 inch, 480x800)"
+endchoice
+
+endmenu

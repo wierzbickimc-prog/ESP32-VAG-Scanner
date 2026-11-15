@@ -4,6 +4,10 @@ kwcore/test_kw1281
 kwcore/test_health
 mac/.build/
 esp32/build/
+esp32/build-*/
+esp32/board-backups/
+esp32/sdkconfig.jc4880p443
+esp32/sdkconfig.jc4880p443.old
 esp32/managed_components/
 esp32/sdkconfig
 esp32/sdkconfig.old

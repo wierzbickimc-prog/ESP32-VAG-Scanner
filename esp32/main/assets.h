@@ -1,9 +1,10 @@
 #pragma once
 
 #include "lvgl.h"
+#include "board_config.h"
 
-#define HERO_W 800
-#define HERO_H 640
+#define HERO_W BOARD_WIDTH
+#define HERO_H (BOARD_WIDTH * 640 / 800)
 
 /* Hero image for a car profile key ("eurovan", "harlequin", "family"); never NULL. */
 const lv_image_dsc_t *assets_hero(const char *key);
